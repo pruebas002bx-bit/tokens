@@ -9,7 +9,7 @@ from psycopg2.extras import RealDictCursor
 
 app = Flask(__name__)
 
-# --- CONFIGURACIÓN ---
+# --- CONFIGURACIÓN DE ENTORNO ---
 DB_HOST = os.getenv("DB_HOST")
 DB_USER = os.getenv("DB_USER")
 DB_PASS = os.getenv("DB_PASS")
@@ -17,10 +17,7 @@ DB_NAME = os.getenv("DB_NAME")
 DB_PORT = os.getenv("DB_PORT", "26367")
 SECRET_KEY = os.getenv("SECRET_KEY", "TU_CLAVE_MAESTRA_SUPER_SECRETA_V4").encode()
 
-# CLAVE MAESTRA PARA GESTIÓN (RECARGAS/CORRECCIONES)
-ADMIN_PASS = "1032491753Outlook*+"
-
-# --- CONEXIÓN BD ---
+# --- CONEXIÓN BASE DE DATOS ---
 def get_db_connection():
     if DB_HOST and (DB_HOST.startswith("postgres://") or DB_HOST.startswith("postgresql://")):
         return psycopg2.connect(DB_HOST, sslmode='require')
@@ -29,16 +26,17 @@ def get_db_connection():
             host=DB_HOST, user=DB_USER, password=DB_PASS, dbname=DB_NAME, port=DB_PORT, sslmode='require'
         )
 
-# --- SEGURIDAD HMAC (Para el Software Cliente) ---
+# --- SEGURIDAD HMAC ---
 def verify_signature(hwid, timestamp, received_sig):
     if abs(time.time() - float(timestamp)) > 300: return False
     data = f"{hwid}:{timestamp}".encode()
     expected_sig = hmac.new(SECRET_KEY, data, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected_sig, received_sig)
 
-# ================= LÓGICA DEL SISTEMA =================
+# =========================================================
+# API (LÓGICA DEL SOFTWARE)
+# =========================================================
 
-# 1. API: CONSUMO DE TOKENS (SOLO SOFTWARE)
 @app.route('/api/check_tokens', methods=['POST'])
 def check_tokens():
     try:
@@ -62,21 +60,15 @@ def check_tokens():
 
                 col = f"tokens_{token_type}"
                 if client.get(col, 0) > 0:
-                    # 1. Descontar
                     cursor.execute(f"UPDATE clientes SET {col} = {col} - 1 WHERE hwid = %s", (hwid,))
-                    
-                    # 2. Guardar en Historial (Consumo automático)
                     cursor.execute("""
                         INSERT INTO historial (hwid, accion, cantidad, tipo_token)
                         VALUES (%s, 'CONSUMO', -1, %s)
                     """, (hwid, token_type))
-                    
                     conn.commit()
                     
-                    # Obtener saldo nuevo
                     cursor.execute(f"SELECT {col} FROM clientes WHERE hwid = %s", (hwid,))
                     new_bal = cursor.fetchone()[col]
-                    
                     return jsonify({"status": "success", "remaining": new_bal, "type": token_type})
                 else:
                     return jsonify({"status": "denied", "msg": "Sin saldo", "type": token_type}), 402
@@ -85,103 +77,216 @@ def check_tokens():
     except Exception as e:
         return jsonify({"status": "error", "msg": str(e)}), 500
 
-# ================= INTERFAZ WEB (PANEL CLARO) =================
+# =========================================================
+# DISEÑO WEB (ALPHA TACTICAL DARK)
+# =========================================================
 
-# ESTILOS CSS (TEMA LIGHT / CLARO PROFESIONAL)
-CSS_STYLE = """
+# Definimos el CSS como una variable separada para evitar conflictos con f-strings
+CSS_THEME = """
 <style>
-    :root { 
-        --bg: #f3f4f6; 
-        --card: #ffffff; 
-        --border: #e5e7eb; 
-        --primary: #2563eb; /* Azul corporativo */
-        --primary-hover: #1d4ed8;
-        --red: #dc2626; 
-        --text: #111827; 
-        --text-dim: #6b7280; 
-        --header-bg: #f9fafb;
+    @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&family=Roboto+Mono:wght@400;700&display=swap');
+
+    :root {
+        --bg-color: #050505;
+        --card-bg: #121212;
+        --border-color: #27272a;
+        --accent-red: #b91c1c;       /* Rojo Oscuro */
+        --accent-red-hover: #dc2626; /* Rojo Brillante */
+        --text-white: #ffffff;
+        --text-gray: #a1a1aa;
+        --success: #15803d;
     }
-    body { background-color: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; margin: 0; padding: 20px; }
-    h1, h2, h3 { color: #1f2937; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }
-    h1 span { color: var(--primary); }
-    
-    .container { max-width: 1200px; margin: 0 auto; }
-    
-    .card { 
-        background: var(--card); 
-        border: 1px solid var(--border); 
-        border-radius: 12px; 
-        padding: 25px; 
-        margin-bottom: 25px; 
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05); 
+
+    body {
+        background-color: var(--bg-color);
+        color: var(--text-white);
+        font-family: 'Rajdhani', sans-serif;
+        margin: 0;
+        padding: 0;
+        background-image: radial-gradient(circle at 50% 0%, #200505 0%, #050505 60%);
     }
-    .card-header { 
-        border-bottom: 2px solid var(--border); 
-        padding-bottom: 15px; 
-        margin-bottom: 20px; 
-        font-size: 1.1rem; 
-        font-weight: bold; 
-        color: #374151;
+
+    /* BARRA DE CARGA SUPERIOR */
+    #nprogress {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 3px;
+        z-index: 9999;
+        display: none;
+    }
+    #nprogress .bar {
+        height: 100%;
+        background: var(--accent-red);
+        width: 0%;
+        transition: width 0.3s ease;
+        box-shadow: 0 0 15px var(--accent-red);
+    }
+
+    /* CONTENEDOR PRINCIPAL */
+    .container {
+        max-width: 1300px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+
+    /* HEADER / LOGO */
+    .header {
+        text-align: center;
+        padding: 40px 0 30px 0;
+        border-bottom: 1px solid var(--border-color);
+        margin-bottom: 30px;
+    }
+    .brand-logo {
+        max-height: 140px; /* Ajusta el tamaño del logo aquí */
+        display: block;
+        margin: 0 auto;
+        filter: drop-shadow(0 0 10px rgba(185, 28, 28, 0.3)); /* Resplandor rojo suave */
+    }
+
+    /* TARJETAS DE ESTADÍSTICAS */
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 20px;
+        margin-bottom: 40px;
+    }
+    .stat-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-left: 4px solid var(--accent-red);
+        border-radius: 6px;
+        padding: 20px;
         display: flex;
-        justify-content: space-between;
+        flex-direction: column;
+    }
+    .stat-title { color: var(--text-gray); font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; font-weight: 700; }
+    .stat-value { font-size: 2.2rem; font-weight: 700; margin-top: 5px; font-family: 'Roboto Mono', monospace; }
+
+    /* FORMULARIO REGISTRO */
+    .action-panel {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 25px;
+        margin-bottom: 30px;
+        display: flex;
         align-items: center;
+        gap: 15px;
+        flex-wrap: wrap;
     }
-    
-    /* TABLAS */
-    table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.95rem; }
-    th { text-align: left; padding: 15px; background: var(--header-bg); color: var(--text-dim); font-size: 0.8rem; text-transform: uppercase; border-bottom: 1px solid var(--border); font-weight: 700; }
-    td { padding: 15px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-    tr:hover { background: #f9fafb; }
-    
+    .panel-title { font-size: 1.2rem; font-weight: 700; color: var(--accent-red); text-transform: uppercase; margin-right: auto; }
+
+    /* TABLA ESTILO TÁCTICO */
+    .table-responsive {
+        overflow-x: auto;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+    }
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        background: var(--card-bg);
+        font-size: 1rem;
+    }
+    th {
+        background: #0f0f0f;
+        color: var(--text-gray);
+        text-align: left;
+        padding: 15px 20px;
+        text-transform: uppercase;
+        font-size: 0.85rem;
+        letter-spacing: 1px;
+        border-bottom: 2px solid var(--border-color);
+    }
+    td {
+        padding: 15px 20px;
+        border-bottom: 1px solid var(--border-color);
+        vertical-align: middle;
+    }
+    tr:hover { background: #1a1a1a; }
+
     /* INPUTS & BOTONES */
-    input, select { 
-        background: #fff; 
-        border: 1px solid #d1d5db; 
-        color: #111827; 
-        padding: 8px 12px; 
-        border-radius: 6px; 
-        font-family: inherit;
+    input, select {
+        background: #000;
+        border: 1px solid #333;
+        color: white;
+        padding: 10px 15px;
+        border-radius: 4px;
+        font-family: 'Roboto Mono', monospace;
+        font-size: 0.9rem;
         outline: none;
-        transition: border 0.2s;
     }
-    input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1); }
+    input:focus { border-color: var(--accent-red); box-shadow: 0 0 5px rgba(220, 38, 38, 0.5); }
+
+    .btn {
+        background: var(--accent-red);
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 4px;
+        font-weight: 700;
+        text-transform: uppercase;
+        cursor: pointer;
+        transition: 0.2s;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 0.9rem;
+    }
+    .btn:hover { background: var(--accent-red-hover); box-shadow: 0 0 10px rgba(220, 38, 38, 0.4); }
     
-    button { cursor: pointer; font-weight: bold; padding: 9px 16px; border-radius: 6px; border: none; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+    .btn-outline {
+        background: transparent;
+        border: 1px solid var(--border-color);
+        color: var(--text-gray);
+    }
+    .btn-outline:hover {
+        border-color: var(--text-white);
+        color: var(--text-white);
+        background: #1a1a1a;
+        box-shadow: none;
+    }
+
+    /* BARRAS DE STOCK */
+    .stock-bar-container {
+        width: 100%;
+        height: 6px;
+        background: #27272a;
+        border-radius: 3px;
+        margin-top: 8px;
+        overflow: hidden;
+    }
+    .stock-bar-fill { height: 100%; transition: width 0.3s; }
     
-    .btn-action { background: var(--primary); color: white; }
-    .btn-action:hover { background: var(--primary-hover); }
-    
-    .btn-hist { 
-        background: white; 
-        color: #4b5563; 
-        border: 1px solid #d1d5db; 
-        text-decoration: none; 
-        padding: 6px 12px; 
-        border-radius: 6px; 
-        font-size: 0.8rem; 
+    /* UTILS */
+    .hwid-tag {
+        font-family: 'Roboto Mono', monospace;
+        font-size: 0.75rem;
+        color: #555;
+        background: #000;
+        padding: 2px 6px;
+        border-radius: 3px;
+        border: 1px solid #222;
+        margin-top: 4px;
         display: inline-block;
     }
-    .btn-hist:hover { background: #f3f4f6; color: #111827; border-color: #9ca3af; }
-    
-    /* UTILIDADES */
-    .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.85rem; font-weight: 700; display: inline-block; min-width: 30px; text-align: center; }
-    .badge-green { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
-    .badge-red { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
-    
-    .flex-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    .hwid-font { font-family: 'Consolas', monospace; color: var(--text-dim); font-size: 0.8rem; background: #f3f4f6; padding: 2px 6px; border-radius: 4px; }
-    
-    .logo-area { display: flex; align-items: center; gap: 15px; margin-bottom: 30px; }
-    .stats-box { background: white; padding: 10px 20px; border-radius: 8px; border: 1px solid var(--border); font-size: 0.9rem; color: #555; }
-    
-    .back-link { display: inline-block; margin-bottom: 20px; color: var(--primary); text-decoration: none; font-weight: 600; }
-    .back-link:hover { text-decoration: underline; }
-
-    /* Input Password Específico */
-    .pass-input { border: 1px solid #fca5a5; background: #fff1f2; }
-    .pass-input:focus { border-color: #dc2626; box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.1); }
+    .badge-hist { font-size: 0.8rem; letter-spacing: 1px; }
 </style>
+<script>
+    function loading() {
+        const b = document.getElementById('nprogress');
+        const f = b.querySelector('.bar');
+        b.style.display='block';
+        setTimeout(()=>f.style.width='50%', 50);
+        setTimeout(()=>f.style.width='90%', 800);
+    }
+</script>
 """
+
+# =========================================================
+# RUTAS DE INTERFAZ
+# =========================================================
 
 @app.route('/')
 def home():
@@ -197,84 +302,108 @@ def admin_panel():
             
             cursor.execute("SELECT SUM(tokens_practica) as tp, SUM(tokens_supervigilancia) as ts FROM clientes")
             stats = cursor.fetchone()
+            
+            total_clientes = len(clients)
     finally:
         conn.close()
+
+    rows = ""
+    for c in clients:
+        # Lógica visual de la barra de progreso (Max visual 100)
+        tp = int(c['tokens_practica'])
+        ts = int(c['tokens_supervigilancia'])
+        
+        # Color rojo si es bajo (<10), verde si es normal
+        color_p = "#15803d" if tp > 10 else "#b91c1c"
+        color_s = "#15803d" if ts > 10 else "#b91c1c"
+        
+        # Ancho barra (tope 100%)
+        width_p = min(100, tp)
+        width_s = min(100, ts)
+
+        rows += f"""
+        <tr>
+            <td>
+                <div style="font-weight:700; font-size:1.1rem;">{c['nombre']}</div>
+                <div class="hwid-tag">{c['hwid']}</div>
+            </td>
+            <td>
+                <div style="font-family:'Roboto Mono'; font-size:1.2rem; font-weight:700;">{tp}</div>
+                <div class="stock-bar-container"><div class="stock-bar-fill" style="width:{width_p}%; background:{color_p}"></div></div>
+            </td>
+            <td>
+                <div style="font-family:'Roboto Mono'; font-size:1.2rem; font-weight:700;">{ts}</div>
+                <div class="stock-bar-container"><div class="stock-bar-fill" style="width:{width_s}%; background:{color_s}"></div></div>
+            </td>
+            <td>
+                <form action="/admin/add_tokens" method="post" onsubmit="loading()" style="display:flex; gap:10px;">
+                    <input type="hidden" name="hwid" value="{c['hwid']}">
+                    <input type="number" name="amount" placeholder="+/-" style="width:70px; text-align:center;" required>
+                    <select name="type">
+                        <option value="practica">Práctica</option>
+                        <option value="supervigilancia">Supervigilancia</option>
+                    </select>
+                    <button type="submit" class="btn">APLICAR</button>
+                </form>
+            </td>
+            <td style="text-align:right;">
+                <a href="/admin/history/{c['hwid']}" class="btn btn-outline badge-hist" onclick="loading()">AUDITORÍA</a>
+            </td>
+        </tr>
+        """
 
     html = f"""
     <!DOCTYPE html>
     <html>
-    <head><title>Alpha Security - Panel de Control</title>{CSS_STYLE}</head>
+    <head>
+        <title>ALPHA COMMAND CENTER</title>
+        {CSS_THEME}
+    </head>
     <body>
+        <div id="nprogress"><div class="bar"></div></div>
+
         <div class="container">
-            <div class="logo-area">
-                <h1>ALPHA <span>SECURITY</span></h1>
-                <div class="stats-box" style="margin-left: auto;">
-                    TOKENS GLOBALES ACTIVOS<br>
-                    Práctica: <b style="color:#2563eb">{stats['tp'] or 0}</b> &nbsp;|&nbsp; Supervigilancia: <b style="color:#2563eb">{stats['ts'] or 0}</b>
+            <div class="header">
+                <img src="https://i.ibb.co/j9Pp0YLz/Logo-2.png" alt="Alpha Security" class="brand-logo">
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-title">Sistemas Activos</div>
+                    <div class="stat-value" style="color: white;">{total_clientes}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">Tokens Práctica (Circulación)</div>
+                    <div class="stat-value" style="color: #4ade80;">{stats['tp'] or 0}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">Tokens Supervigilancia (Circulación)</div>
+                    <div class="stat-value" style="color: #f87171;">{stats['ts'] or 0}</div>
                 </div>
             </div>
 
-            <div class="card">
-                <div class="card-header">
-                    <span>REGISTRAR NUEVA MÁQUINA</span>
-                </div>
-                <form action="/admin/register" method="post" class="flex-row">
-                    <input type="text" name="nombre" placeholder="Nombre Escuela / Cliente" required style="flex:2">
-                    <input type="text" name="hwid" placeholder="HWID (Hardware ID)" required style="flex:3">
-                    <button type="submit" class="btn-action">CREAR CLIENTE</button>
+            <div class="action-panel">
+                <div class="panel-title">NUEVO DESPLIEGUE</div>
+                <form action="/admin/register" method="post" onsubmit="loading()" style="display:flex; gap:15px; flex:1;">
+                    <input type="text" name="nombre" placeholder="Nombre de la Unidad / Escuela" required style="flex:1">
+                    <input type="text" name="hwid" placeholder="ID de Hardware (HWID)" required style="flex:1">
+                    <button type="submit" class="btn">REGISTRAR UNIDAD</button>
                 </form>
             </div>
 
-            <div class="card">
-                <div class="card-header">LISTADO DE CLIENTES</div>
+            <div class="table-responsive">
                 <table>
                     <thead>
                         <tr>
-                            <th>CLIENTE / HWID</th>
-                            <th>SALDO PRÁCTICA</th>
-                            <th>SALDO SUPERV.</th>
-                            <th style="width: 450px;">GESTIÓN (REQUIERE CLAVE)</th>
-                            <th>HISTORIAL</th>
+                            <th style="width:30%">Unidad</th>
+                            <th style="width:15%">Stock Práctica</th>
+                            <th style="width:15%">Stock Supervig.</th>
+                            <th style="width:30%">Gestión de Recursos</th>
+                            <th style="width:10%; text-align:right">Logs</th>
                         </tr>
                     </thead>
                     <tbody>
-                    {''.join([f"""
-                        <tr>
-                            <td>
-                                <div style="font-weight:bold; font-size:1rem; color:#111827;">{c['nombre']}</div>
-                                <div class="hwid-font" style="margin-top:4px;">{c['hwid']}</div>
-                            </td>
-                            <td>
-                                <span class="badge { 'badge-green' if c['tokens_practica'] > 0 else 'badge-red' }">
-                                    {c['tokens_practica']}
-                                </span>
-                            </td>
-                            <td>
-                                <span class="badge { 'badge-green' if c['tokens_supervigilancia'] > 0 else 'badge-red' }">
-                                    {c['tokens_supervigilancia']}
-                                </span>
-                            </td>
-                            <td>
-                                <form action="/admin/add_tokens" method="post" class="flex-row" style="background: #f9fafb; padding: 8px; border-radius: 8px; border: 1px solid #eee;">
-                                    <input type="hidden" name="hwid" value="{c['hwid']}">
-                                    
-                                    <input type="number" name="amount" placeholder="+/-" style="width:50px; text-align:center;" required>
-                                    
-                                    <select name="type">
-                                        <option value="practica">Práctica</option>
-                                        <option value="supervigilancia">Supervigilancia</option>
-                                    </select>
-                                    
-                                    <input type="password" name="admin_pass" class="pass-input" placeholder="Clave Admin" style="width:100px;" required>
-                                    
-                                    <button type="submit" class="btn-action" style="padding: 8px 12px;">Aplicar</button>
-                                </form>
-                            </td>
-                            <td style="text-align:center;">
-                                <a href="/admin/history/{c['hwid']}" class="btn-hist">Ver Logs</a>
-                            </td>
-                        </tr>
-                    """ for c in clients])}
+                        {rows}
                     </tbody>
                 </table>
             </div>
@@ -289,12 +418,10 @@ def history(hwid):
     conn = get_db_connection()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            # Info Cliente
             cursor.execute("SELECT nombre FROM clientes WHERE hwid = %s", (hwid,))
             client = cursor.fetchone()
             name = client['nombre'] if client else "Desconocido"
 
-            # Historial
             cursor.execute("""
                 SELECT * FROM historial 
                 WHERE hwid = %s 
@@ -305,60 +432,61 @@ def history(hwid):
     finally:
         conn.close()
 
+    log_rows = ""
+    for log in logs:
+        # Colores para el historial
+        accion = log['accion']
+        color_acc = "#b91c1c" if accion == "CONSUMO" else "#15803d" if accion == "RECARGA" else "#f59e0b"
+        
+        cant = log['cantidad']
+        txt_cant = f"{cant:+}" if cant != 0 else "0"
+        color_cant = "#b91c1c" if cant < 0 else "#15803d"
+
+        log_rows += f"""
+        <tr>
+            <td style="color: #666; font-family:'Roboto Mono'; font-size:0.85rem;">{log['fecha']}</td>
+            <td><span style="color:{color_acc}; font-weight:700;">{accion}</span></td>
+            <td style="text-transform:uppercase; font-size:0.9rem;">{log['tipo_token']}</td>
+            <td><span style="color:{color_cant}; font-family:'Roboto Mono'; font-weight:700; font-size:1.1rem;">{txt_cant}</span></td>
+        </tr>
+        """
+
     html = f"""
     <!DOCTYPE html>
     <html>
-    <head><title>Historial - {name}</title>{CSS_STYLE}</head>
+    <head>
+        <title>Historial | {name}</title>
+        {CSS_THEME}
+    </head>
     <body>
+        <div id="nprogress"><div class="bar"></div></div>
+        
         <div class="container">
-            <a href="/admin/panel" class="back-link">← VOLVER AL PANEL</a>
-            
-            <div class="card">
-                <div class="card-header">
-                    <span>HISTORIAL DE MOVIMIENTOS: <span style="color:#2563eb">{name}</span></span>
-                </div>
-                <div style="margin-bottom:20px; color:#555; background:#f3f4f6; padding:10px; border-radius:6px; font-family:monospace;">
-                    ID: {hwid}
-                </div>
-                
+            <div style="margin-bottom: 20px;">
+                <a href="/admin/panel" class="btn btn-outline" onclick="loading()">← VOLVER AL COMANDO</a>
+            </div>
+
+            <div class="action-panel" style="flex-direction:column; align-items:flex-start;">
+                <div style="font-size:0.9rem; color:var(--accent-red); font-weight:700; letter-spacing:1px;">EXPEDIENTE TÁCTICO</div>
+                <div style="font-size:2.5rem; font-weight:700; line-height:1;">{name}</div>
+                <div class="hwid-tag" style="font-size:1rem; padding:8px 12px;">ID: {hwid}</div>
+            </div>
+
+            <div class="table-responsive">
                 <table>
                     <thead>
                         <tr>
-                            <th>FECHA / HORA</th>
-                            <th>ACCIÓN</th>
-                            <th>TIPO TOKEN</th>
-                            <th>CANTIDAD</th>
+                            <th>Fecha / Hora</th>
+                            <th>Evento</th>
+                            <th>Recurso</th>
+                            <th>Movimiento</th>
                         </tr>
                     </thead>
                     <tbody>
-                    {''.join([f"""
-                        <tr>
-                            <td style="color:#555">{log['fecha']}</td>
-                            <td>
-                                <span style="
-                                    font-weight:bold;
-                                    color:{'#dc2626' if log['accion']=='CONSUMO' else '#16a34a' if log['accion']=='RECARGA' else '#d97706'}
-                                ">
-                                    {log['accion']}
-                                </span>
-                            </td>
-                            <td style="text-transform:uppercase; font-size:0.85rem; font-weight:600; color:#4b5563;">
-                                {log['tipo_token']}
-                            </td>
-                            <td>
-                                <span style="
-                                    font-weight:bold; 
-                                    font-size:1rem;
-                                    color:{'#dc2626' if log['cantidad'] < 0 else '#16a34a'}
-                                ">
-                                    {'+' if log['cantidad'] > 0 else ''}{log['cantidad']}
-                                </span>
-                            </td>
-                        </tr>
-                    """ for log in logs])}
+                        {log_rows}
                     </tbody>
                 </table>
-                { '<div style="padding:40px; text-align:center; color:#9ca3af; font-style:italic;">No hay registros de actividad reciente.</div>' if not logs else '' }
+                { '<div style="padding:40px; text-align:center; color:#444;">Sin actividad reciente registrada.</div>' if not logs else '' }
             </div>
         </div>
     </body>
@@ -369,49 +497,31 @@ def history(hwid):
 @app.route('/admin/add_tokens', methods=['POST'])
 def add_tokens():
     try:
-        # 1. VERIFICAR CLAVE MAESTRA
-        password_input = request.form.get('admin_pass', '')
-        if password_input != ADMIN_PASS:
-            return """
-            <h1 style='color:red; font-family:sans-serif; text-align:center; margin-top:50px;'>
-                ACCESO DENEGADO
-            </h1>
-            <p style='text-align:center; font-family:sans-serif;'>La clave de administrador es incorrecta.</p>
-            <div style='text-align:center;'><a href='/admin/panel'>Volver a intentar</a></div>
-            """, 403
-
-        # 2. PROCESAR TRANSACCIÓN
         hwid = request.form['hwid']
-        amount = int(request.form['amount']) # Positivo para recarga, negativo para corrección
+        amount = int(request.form['amount'])
         token_type = request.form['type']
         
-        # Etiqueta para el log
-        accion = "RECARGA"
-        if amount < 0: accion = "CORRECCION"
-        
+        accion = "RECARGA" if amount >= 0 else "CORRECCION"
         col = f"tokens_{token_type}"
         
         conn = get_db_connection()
         with conn.cursor() as cursor:
             # Actualizar Saldo
             cursor.execute(f"UPDATE clientes SET {col} = {col} + %s WHERE hwid = %s", (amount, hwid))
-            
-            # Guardar en Historial
+            # Guardar Log
             cursor.execute("""
                 INSERT INTO historial (hwid, accion, cantidad, tipo_token)
                 VALUES (%s, %s, %s, %s)
             """, (hwid, accion, amount, token_type))
-            
             conn.commit()
         conn.close()
         return redirect('/admin/panel')
     except Exception as e:
-        return f"Error procesando solicitud: {e}"
+        return f"<h2 style='color:red'>Error Crítico: {e}</h2>"
 
 @app.route('/admin/register', methods=['POST'])
 def register():
     try:
-        # (Opcional) Podrías requerir clave aquí también, pero el pedido fue para asignar/modificar.
         nombre = request.form['nombre']
         hwid = request.form['hwid']
         conn = get_db_connection()
@@ -421,7 +531,7 @@ def register():
         conn.close()
         return redirect('/admin/panel')
     except Exception as e:
-        return f"Error al registrar (¿HWID duplicado?): {e}"
+        return f"<h2 style='color:red'>Error al registrar: {e}</h2>"
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
