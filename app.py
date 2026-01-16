@@ -58,7 +58,7 @@ class PDFReport(FPDF):
         self.cell(0, 10, f'Pagina {self.page_no()}', 0, 0, 'C')
 
 # =========================================================
-# API (CON KILL SWITCH INTEGRADO)
+# API
 # =========================================================
 @app.route('/api/check_tokens', methods=['POST'])
 def check_tokens():
@@ -81,14 +81,8 @@ def check_tokens():
                 if not client:
                     return jsonify({"status": "error", "msg": "No registrado"}), 404
 
-                # --- KILL SWITCH: VERIFICAR BLOQUEO POR PAGO ---
                 if client.get('bloqueado', False):
-                    # Retornamos error 403 para que el software cliente se detenga
-                    return jsonify({
-                        "status": "error", 
-                        "msg": "SISTEMA BLOQUEADO ADMINISTRATIVAMENTE. CONTACTE A SOPORTE."
-                    }), 403
-                # -----------------------------------------------
+                    return jsonify({"status": "error", "msg": "SISTEMA BLOQUEADO. CONTACTE A SOPORTE."}), 403
 
                 modelo = client.get('modelo_negocio', 'tokens')
 
@@ -174,7 +168,7 @@ CSS_THEME = """
     
     /* CLIENT LIST */
     .client-item { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 1rem; overflow: hidden; position: relative; }
-    .client-item.blocked { border-left: 5px solid #000; opacity: 0.8; background: #e5e7eb; } /* Estilo visual de bloqueado */
+    .client-item.blocked { border-left: 5px solid #000; opacity: 0.8; background: #e5e7eb; }
     
     .client-header { padding: 1.2rem; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
     .client-profile { display: flex; align-items: center; gap: 15px; }
@@ -182,7 +176,6 @@ CSS_THEME = """
     .client-details { padding: 1.5rem; background: #fcfcfc; border-top: 1px solid var(--border); display: none; }
     .client-details.open { display: block; }
 
-    /* ETIQUETA BLOQUEADO */
     .blocked-badge {
         position: absolute; top: 10px; right: 50px;
         background: #000; color: #fff; padding: 2px 8px; 
@@ -190,7 +183,7 @@ CSS_THEME = """
         letter-spacing: 1px;
     }
 
-    /* FINANCE GRID (5 Columnas) */
+    /* FINANCE GRID */
     .finance-grid { 
         display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; 
         background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 15px; 
@@ -202,7 +195,6 @@ CSS_THEME = """
     .fin-alpha { color: var(--primary); }
     .fin-assist { color: var(--assist); }
 
-    /* INFO BANCARIA */
     .bank-info {
         font-size: 0.8rem; color: #4b5563; background: #eff6ff; 
         padding: 5px; border-radius: 4px; margin-top: 5px; border: 1px solid #bfdbfe;
@@ -214,7 +206,6 @@ CSS_THEME = """
     .btn-outline { background: white; border: 1px solid var(--border); color: var(--text-main); }
     .btn-danger { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
     
-    /* BOTÓN BLOQUEO */
     .btn-block { background: #000; color: #fff; }
     .btn-block:hover { background: #333; }
     .btn-unblock { background: #16a34a; color: #fff; }
@@ -234,6 +225,15 @@ CSS_THEME = """
     .file-upload { position: relative; overflow: hidden; display: inline-block; }
     .file-upload input[type=file] { font-size: 100px; position: absolute; left: 0; top: 0; opacity: 0; cursor: pointer; }
     .file-btn { background: #374151; color: white; padding: 8px 15px; border-radius: 6px; display: inline-block; cursor: pointer; font-size: 0.9rem; }
+    
+    /* ESTILO PARA DETALLES DE SOCIO */
+    .profile-header { display: flex; gap: 20px; align-items: center; margin-bottom: 20px; background: white; padding: 20px; border-radius: 12px; border: 1px solid #e5e7eb; }
+    .profile-img { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; }
+    .profile-info h1 { margin: 0; font-size: 1.5rem; color: #111827; }
+    .profile-meta { color: #6b7280; font-size: 0.9rem; }
+    .profile-stats { margin-left: auto; display: flex; gap: 20px; text-align: right; }
+    .stat-item h3 { margin: 0; font-size: 1.2rem; color: var(--primary); }
+    .stat-item span { font-size: 0.8rem; color: #6b7280; font-weight: bold; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
@@ -268,15 +268,12 @@ def admin_panel():
     
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            # 1. Clientes
             cursor.execute("SELECT * FROM clientes ORDER BY id DESC")
             all_clients = cursor.fetchall()
             
-            # 2. Stats
             cursor.execute("SELECT SUM(tokens_practica) as tp, SUM(tokens_supervigilancia) as ts, COUNT(*) as total FROM clientes")
             stats = cursor.fetchone()
             
-            # 3. Chart Data
             cursor.execute("""
                 SELECT TO_CHAR(fecha, 'YYYY-MM') as mes, SUM(cantidad) as total 
                 FROM historial WHERE accion = 'RECARGA' 
@@ -291,15 +288,12 @@ def admin_panel():
     clients_tokens = [c for c in all_clients if c.get('modelo_negocio') != 'conteo']
     clients_conteo = [c for c in all_clients if c.get('modelo_negocio') == 'conteo']
 
-    # --- GENERADOR HTML: TAB PREPAGO (TOKENS) ---
     html_tokens = ""
     for c in clients_tokens:
         logo = c.get('logo_url') or f"https://ui-avatars.com/api/?name={c['nombre']}&background=random"
-        raw_addr = c.get('direccion')
-        if not raw_addr: raw_addr = 'Bogota, Colombia'
+        raw_addr = c.get('direccion') or 'Bogota, Colombia'
         map_url = f"https://maps.google.com/maps?q={raw_addr.replace(' ','+')}&output=embed"
         
-        # Estado de bloqueo
         is_blocked = c.get('bloqueado', False)
         blocked_class = "blocked" if is_blocked else ""
         blocked_badge = '<div class="blocked-badge">BLOQUEADO POR PAGO</div>' if is_blocked else ''
@@ -367,14 +361,12 @@ def admin_panel():
         </div>
         """
 
-    # --- GENERADOR HTML: TAB SOCIOS (CONTEO) ---
     html_conteo = ""
     for c in clients_conteo:
         logo = c.get('logo_url') or f"https://ui-avatars.com/api/?name={c['nombre']}&background=random"
         activaciones = c.get('conteo_activaciones', 0)
         valor_unit = c.get('valor_activacion', 5000)
         
-        # Bloqueo
         is_blocked = c.get('bloqueado', False)
         blocked_class = "blocked" if is_blocked else ""
         blocked_badge = '<div class="blocked-badge">BLOQUEADO POR PAGO</div>' if is_blocked else ''
@@ -389,13 +381,11 @@ def admin_panel():
             </form>
         """
 
-        # Datos Asistente
         pct_alpha = c.get('porcentaje_alpha', 70)
         has_assist = c.get('asistente_activo', False)
         pct_assist = c.get('asistente_porcentaje', 0)
         name_assist = c.get('asistente_nombre', 'Asistente')
         
-        # Datos Bancarios Asistente
         banco = c.get('asistente_banco', '')
         cuenta = c.get('asistente_cuenta', '')
         tipo_cta = c.get('asistente_tipo_cuenta', '')
@@ -404,12 +394,10 @@ def admin_panel():
         if has_assist and (banco or cuenta):
             bank_info_html = f"""
             <div class="bank-info">
-                <b>DATOS BANCARIOS {name_assist.upper()}:</b><br>
-                {banco} | {tipo_cta} | No. {cuenta}
+                <b>DATOS PAGO:</b><br>{banco}<br>{tipo_cta} - {cuenta}
             </div>
             """
 
-        # Cálculos Financieros
         total_generado = activaciones * valor_unit
         ganancia_alpha = int(total_generado * (pct_alpha / 100))
         ganancia_assist = int(total_generado * (pct_assist / 100)) if has_assist else 0
@@ -466,6 +454,7 @@ def admin_panel():
                     {btn_block_html}
                     
                     <a href="/admin/history/{c['hwid']}" class="btn btn-outline" style="font-size:0.8rem;">📜 DETALLES</a>
+                    
                     <form action="/admin/delete_client" method="post" style="display:inline;" onsubmit="return confirm('¿Borrar?');">
                         <input type="hidden" name="hwid" value="{c['hwid']}">
                         <button class="btn btn-danger" style="font-size:0.8rem;">🗑 BORRAR</button>
@@ -532,7 +521,6 @@ def admin_panel():
                                 <div id="assist-fields" class="full-width form-grid" style="display:none; margin-top:5px;">
                                     <div><label>Nombre Asistente</label><input type="text" name="asistente_nombre" placeholder="Ej: Juan Vendedor"></div>
                                     <div><label>Porcentaje Asistente (%)</label><input type="number" name="asistente_porcentaje" value="10"></div>
-                                    
                                     <div class="full-width" style="margin-top:5px; font-weight:bold; color:#2563eb;">Datos Bancarios Asistente</div>
                                     <div><label>Banco</label><input type="text" name="asistente_banco" placeholder="Ej: Bancolombia"></div>
                                     <div><label>Tipo Cuenta</label><select name="asistente_tipo_cuenta"><option>Ahorros</option><option>Corriente</option><option>Nequi/Daviplata</option></select></div>
@@ -604,13 +592,11 @@ def register():
                 if res.status_code == 200: logo_url = res.json()['data']['url']
             except: pass
 
-        # Datos del Asistente y Banco
         asistente_activo = True if request.form.get('asistente_activo') == 'on' else False
         asistente_nombre = request.form.get('asistente_nombre', '')
         try: asistente_porc = int(request.form.get('asistente_porcentaje', 0))
         except: asistente_porc = 0
         
-        # Datos Bancarios
         asis_banco = request.form.get('asistente_banco', '')
         asis_cuenta = request.form.get('asistente_cuenta', '')
         asis_tipo = request.form.get('asistente_tipo_cuenta', '')
@@ -658,19 +644,15 @@ def add_tokens():
         return redirect('/admin/panel')
     except Exception as e: return f"Error: {e}"
 
-# NUEVA RUTA PARA BLOQUEO/DESBLOQUEO
 @app.route('/admin/toggle_block', methods=['POST'])
 def toggle_block():
     try:
         hwid = request.form['hwid']
-        # Convertir string 'true'/'false' a booleano real
         new_status = True if request.form['new_status'].lower() == 'true' else False
         
         conn = get_db_connection()
         with conn.cursor() as cursor:
             cursor.execute("UPDATE clientes SET bloqueado = %s WHERE hwid = %s", (new_status, hwid))
-            
-            # Registrar acción en historial
             accion_txt = "BLOQUEO_ADMIN" if new_status else "DESBLOQUEO_ADMIN"
             cursor.execute("INSERT INTO historial (hwid, accion, cantidad, tipo_token) VALUES (%s, %s, 0, 'system')", (hwid, accion_txt))
             conn.commit()
@@ -715,8 +697,22 @@ def history(hwid):
             logs = cursor.fetchall()
     finally: conn.close()
 
-    pdf_link = f"/admin/download_pdf/{hwid}"
+    if not client: return "Cliente no encontrado"
+
+    # Datos adicionales para el perfil
+    logo = client.get('logo_url') or f"https://ui-avatars.com/api/?name={client['nombre']}&background=random"
+    modelo = "SOCIO (CONTEO)" if client.get('modelo_negocio') == 'conteo' else "PREPAGO (TOKENS)"
     
+    # Asistente
+    has_assist = client.get('asistente_activo', False)
+    assist_info = "NO"
+    if has_assist:
+        name = client.get('asistente_nombre', '')
+        pct = client.get('asistente_porcentaje', 0)
+        bank = client.get('asistente_banco', '---')
+        acc = client.get('asistente_cuenta', '---')
+        assist_info = f"<b>{name}</b> ({pct}%)<br><span style='font-size:0.8rem'>{bank} - {acc}</span>"
+
     # Filas
     log_rows = ""
     for l in logs:
@@ -724,16 +720,32 @@ def history(hwid):
         log_rows += f"<tr><td>{l['fecha']}</td><td>{l['accion']}</td><td>{l['tipo_token']}</td><td style='color:{color}; font-weight:bold'>{l['cantidad']}</td></tr>"
 
     return render_template_string(f"""
-        <!DOCTYPE html><html><head><title>Logs</title>{CSS_THEME}</head><body>
-        <div class="container" style="max-width:900px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-                <a href="/admin/panel" class="btn btn-outline">← VOLVER</a>
-                <a href="{pdf_link}" class="btn">DESCARGAR REPORTE PDF</a>
+        <!DOCTYPE html><html><head><title>Detalles</title>{CSS_THEME}</head><body>
+        <div class="container">
+            <a href="/admin/panel" class="btn btn-outline" style="margin-bottom:20px;">← VOLVER</a>
+            
+            <div class="profile-header">
+                <img src="{logo}" class="profile-img">
+                <div class="profile-info">
+                    <h1>{client['nombre']}</h1>
+                    <div class="profile-meta">{client['hwid']} | {client.get('direccion', '---')}</div>
+                    <div class="profile-meta" style="margin-top:5px; color:#2563eb;">RESPONSABLE: {client.get('responsable', '---')} | TEL: {client.get('telefono1', '---')}</div>
+                </div>
+                <div class="profile-stats">
+                    <div class="stat-item"><h3>{modelo}</h3><span>MODELO NEGOCIO</span></div>
+                    <div class="stat-item"><h3>{assist_info}</h3><span>ASISTENTE</span></div>
+                </div>
             </div>
+
             <div class="card">
-                <div class="section-title">HISTORIAL: {client['nombre'] if client else 'DESCONOCIDO'}</div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                    <div class="section-title" style="margin:0;">HISTORIAL DE MOVIMIENTOS</div>
+                    <a href="/admin/download_pdf/{hwid}" class="btn">DESCARGAR REPORTE PDF</a>
+                </div>
                 <table style="width:100%; border-collapse:collapse;">
-                    <tr style="background:#f9fafb; text-align:left;"><th style="padding:10px;">FECHA</th><th>ACCIÓN</th><th>TOKEN</th><th>CANT.</th></tr>
+                    <tr style="background:#f9fafb; text-align:left; border-bottom:2px solid #e5e7eb;">
+                        <th style="padding:10px;">FECHA</th><th>ACCIÓN</th><th>TOKEN/TIPO</th><th>CANTIDAD</th>
+                    </tr>
                     {log_rows}
                 </table>
             </div>
@@ -754,14 +766,16 @@ def download_pdf(hwid):
     pdf = PDFReport()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 12)
+    
     name_safe = client['nombre'] if client else "Desconocido"
     pdf.cell(0, 10, f"CLIENTE: {name_safe}", 0, 1)
     
     if client:
-        if client.get('modelo_negocio') == 'conteo':
-            pdf.cell(0, 5, f"MODELO: SOCIO ({client['porcentaje_alpha']}% ALPHA)", 0, 1)
-        else:
-            pdf.cell(0, 5, "MODELO: PREPAGO TOKENS", 0, 1)
+        pdf.set_font("Arial", '', 10)
+        pdf.cell(0, 5, f"HWID: {hwid}", 0, 1)
+        pdf.cell(0, 5, f"MODELO: {client.get('modelo_negocio', 'TOKENS').upper()}", 0, 1)
+        if client.get('asistente_activo'):
+            pdf.cell(0, 5, f"ASISTENTE: {client.get('asistente_nombre')} ({client.get('asistente_porcentaje')}%)", 0, 1)
     
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 10); pdf.set_fill_color(220, 220, 220)
