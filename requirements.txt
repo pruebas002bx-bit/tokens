@@ -3,3 +3,5 @@ gunicorn
 psycopg2-binary
 cryptography
 python-dotenv
+requests
+fpdf
