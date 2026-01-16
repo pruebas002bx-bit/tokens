@@ -1,4 +1,5 @@
 flask
-pymysql
+gunicorn
+psycopg2-binary
 cryptography
 python-dotenv
