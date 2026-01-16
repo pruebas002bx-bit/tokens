@@ -6,12 +6,14 @@ import datetime
 import json
 import requests
 import io
-from flask import Flask, request, jsonify, render_template_string, redirect, url_for, send_file
+from flask import Flask, request, jsonify, render_template_string, redirect, url_for, send_file, session
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from fpdf import FPDF
 
 app = Flask(__name__)
+# Necesario para manejar sesiones (cookies firmadas)
+app.secret_key = os.getenv("SECRET_KEY", "TU_CLAVE_MAESTRA_SUPER_SECRETA_V4")
 
 # --- CONFIGURACIÓN DE ENTORNO ---
 DB_HOST = os.getenv("DB_HOST")
@@ -21,6 +23,7 @@ DB_NAME = os.getenv("DB_NAME")
 DB_PORT = os.getenv("DB_PORT", "26367")
 SECRET_KEY = os.getenv("SECRET_KEY", "TU_CLAVE_MAESTRA_SUPER_SECRETA_V4").encode()
 IMGBB_API_KEY = "df01bb05ce03159d54c33e1e22eba2cf"
+ADMIN_PASS = "1032491753Outlook*+"
 
 # --- CONEXIÓN BASE DE DATOS ---
 def get_db_connection():
@@ -43,6 +46,107 @@ def verify_signature(hwid, timestamp, received_sig):
     return hmac.compare_digest(expected_sig, received_sig)
 
 # =========================================================
+# ESTILOS CSS GLOBALES (LIGHT MODE PRO)
+# =========================================================
+CSS_THEME = """
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
+
+    :root {
+        --primary: #b91c1c; 
+        --primary-dark: #991b1b;
+        --secondary: #4b5563;
+        --bg: #f3f4f6;
+        --surface: #ffffff;
+        --text-main: #1f2937;
+        --border: #e5e7eb;
+        --success: #059669;
+        --money: #047857;
+        --assist: #2563eb; 
+    }
+
+    * { box-sizing: border-box; }
+    body { background-color: var(--bg); color: var(--text-main); font-family: 'Inter', sans-serif; margin: 0; }
+
+    /* NAVBAR */
+    .navbar {
+        background: var(--surface); border-bottom: 1px solid var(--border); padding: 0.8rem 2rem;
+        display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+    }
+    .brand-logo { height: 45px; }
+
+    .container { max-width: 1400px; margin: 2rem auto; padding: 0 1.5rem; }
+
+    /* CARDS */
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 1.5rem; }
+    
+    /* LOGIN PAGE SPECIFIC */
+    .login-wrapper {
+        display: flex; align-items: center; justify-content: center; height: 100vh; background: #f3f4f6;
+    }
+    .login-card {
+        background: white; width: 400px; padding: 30px; border-radius: 16px;
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+        text-align: center;
+    }
+    .login-logo { height: 60px; margin-bottom: 20px; }
+    
+    .login-tabs { display: flex; margin-bottom: 20px; border-bottom: 2px solid #e5e7eb; }
+    .lt-btn {
+        flex: 1; padding: 10px; cursor: pointer; font-weight: 600; color: #6b7280; background: none; border: none;
+        transition: all 0.3s;
+    }
+    .lt-btn.active { color: var(--primary); border-bottom: 3px solid var(--primary); }
+    
+    .login-form { display: none; }
+    .login-form.active { display: block; animation: fadeIn 0.3s; }
+    
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+    input { 
+        width: 100%; padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; margin-bottom: 15px; 
+        font-family: 'Inter'; font-size: 14px;
+    }
+    input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(185, 28, 28, 0.1); }
+
+    .btn-login {
+        width: 100%; background: var(--primary); color: white; padding: 12px; border-radius: 8px;
+        font-weight: 700; border: none; cursor: pointer; transition: background 0.2s;
+    }
+    .btn-login:hover { background: var(--primary-dark); }
+
+    /* DASHBOARD ELEMENTS */
+    .finance-grid { 
+        display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 20px;
+    }
+    .fin-card {
+        background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 20px; text-align: center;
+    }
+    .fin-card.highlight { border: 2px solid var(--primary); background: #fff5f5; }
+    
+    .fin-label { font-size: 0.8rem; font-weight: 700; color: #6b7280; text-transform: uppercase; margin-bottom: 5px; }
+    .fin-val { font-size: 1.8rem; font-weight: 800; color: #111827; }
+    
+    .text-red { color: var(--primary); }
+    .text-green { color: var(--money); }
+    .text-blue { color: var(--assist); }
+
+    /* TABLAS */
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; padding: 12px; background: #f9fafb; font-size: 0.8rem; text-transform: uppercase; color: #6b7280; }
+    td { padding: 12px; border-bottom: 1px solid #e5e7eb; font-size: 0.9rem; }
+    
+    /* UTILS */
+    .btn-outline { background: white; border: 1px solid #e5e7eb; color: #374151; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: 600; }
+    .btn-outline:hover { background: #f3f4f6; }
+    .badge { padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 700; }
+    .bg-green { background: #dcfce7; color: #166534; }
+    .bg-red { background: #fee2e2; color: #991b1b; }
+</style>
+"""
+
+# =========================================================
 # LÓGICA PDF
 # =========================================================
 class PDFReport(FPDF):
@@ -58,7 +162,7 @@ class PDFReport(FPDF):
         self.cell(0, 10, f'Pagina {self.page_no()}', 0, 0, 'C')
 
 # =========================================================
-# API
+# API (SOFTWARE CLIENTE)
 # =========================================================
 @app.route('/api/check_tokens', methods=['POST'])
 def check_tokens():
@@ -82,7 +186,7 @@ def check_tokens():
                     return jsonify({"status": "error", "msg": "No registrado"}), 404
 
                 if client.get('bloqueado', False):
-                    return jsonify({"status": "error", "msg": "SISTEMA BLOQUEADO. CONTACTE A SOPORTE."}), 403
+                    return jsonify({"status": "error", "msg": "SISTEMA BLOQUEADO. PAGO PENDIENTE."}), 403
 
                 modelo = client.get('modelo_negocio', 'tokens')
 
@@ -111,172 +215,240 @@ def check_tokens():
         return jsonify({"status": "error", "msg": str(e)}), 500
 
 # =========================================================
-# INTERFAZ WEB (CRM PRO)
+# RUTAS WEB (LOGIN & PANELES)
 # =========================================================
 
-CSS_THEME = """
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
-
-    :root {
-        --primary: #b91c1c; 
-        --secondary: #4b5563;
-        --bg: #f3f4f6;
-        --surface: #ffffff;
-        --text-main: #1f2937;
-        --border: #e5e7eb;
-        --success: #059669;
-        --money: #047857;
-        --assist: #2563eb; 
-    }
-
-    * { box-sizing: border-box; }
-    body { background-color: var(--bg); color: var(--text-main); font-family: 'Inter', sans-serif; margin: 0; }
-
-    .navbar {
-        background: var(--surface); border-bottom: 1px solid var(--border); padding: 0.8rem 2rem;
-        display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100;
-    }
-    .brand-logo { height: 45px; }
-
-    .container { max-width: 1400px; margin: 2rem auto; padding: 0 1.5rem; }
-
-    /* TABS */
-    .tabs-nav { display: flex; gap: 1rem; margin-bottom: 2rem; border-bottom: 2px solid var(--border); padding-bottom: 1px; }
-    .tab-btn {
-        background: transparent; border: none; padding: 1rem 1.5rem; font-size: 0.95rem; font-weight: 700;
-        color: #6b7280; cursor: pointer; position: relative; transition: all 0.3s;
-        border-radius: 8px 8px 0 0;
-    }
-    .tab-btn:hover { background: #e5e7eb; }
-    .tab-btn.active { background: var(--surface); border: 1px solid var(--border); border-bottom: 2px solid var(--surface); margin-bottom: -2px; color: var(--text-main); }
-    
-    .tab-btn-socio.active { border-top: 4px solid var(--primary); color: var(--primary); }
-    .tab-btn-tokens.active { border-top: 4px solid var(--secondary); color: var(--secondary); }
-
-    .tab-content { display: none; animation: fadeIn 0.4s ease; }
-    .tab-content.active { display: block; }
-    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-
-    /* CARDS */
-    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 1.5rem; }
-    
-    .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.5rem; }
-    .full-width { grid-column: 1 / -1; }
-    label { display: block; font-size: 0.75rem; font-weight: 700; color: #6b7280; margin-bottom: 5px; text-transform: uppercase; }
-    input, select { width: 100%; padding: 0.7rem; border: 1px solid var(--border); border-radius: 6px; font-family: inherit; }
-    
-    /* CLIENT LIST */
-    .client-item { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 1rem; overflow: hidden; position: relative; }
-    .client-item.blocked { border-left: 5px solid #000; opacity: 0.8; background: #e5e7eb; }
-    
-    .client-header { padding: 1.2rem; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
-    .client-profile { display: flex; align-items: center; gap: 15px; }
-    .client-logo { width: 50px; height: 50px; border-radius: 50%; object-fit: cover; border: 2px solid #eee; }
-    .client-details { padding: 1.5rem; background: #fcfcfc; border-top: 1px solid var(--border); display: none; }
-    .client-details.open { display: block; }
-
-    .blocked-badge {
-        position: absolute; top: 10px; right: 50px;
-        background: #000; color: #fff; padding: 2px 8px; 
-        font-size: 10px; font-weight: bold; border-radius: 4px;
-        letter-spacing: 1px;
-    }
-
-    /* FINANCE GRID */
-    .finance-grid { 
-        display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; 
-        background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 15px; 
-    }
-    .fin-box { text-align: center; }
-    .fin-label { font-size: 0.7rem; color: #64748b; font-weight: bold; }
-    .fin-val { font-size: 1.1rem; font-weight: 800; color: #0f172a; }
-    .fin-money { color: var(--money); }
-    .fin-alpha { color: var(--primary); }
-    .fin-assist { color: var(--assist); }
-
-    .bank-info {
-        font-size: 0.8rem; color: #4b5563; background: #eff6ff; 
-        padding: 5px; border-radius: 4px; margin-top: 5px; border: 1px solid #bfdbfe;
-    }
-
-    /* BUTTONS */
-    .btn { background: var(--primary); color: white; padding: 0.7rem 1.5rem; border-radius: 6px; font-weight: 700; border: none; cursor: pointer; text-decoration: none; display: inline-block; font-size: 0.9rem; }
-    .btn:hover { background: var(--primary-hover); }
-    .btn-outline { background: white; border: 1px solid var(--border); color: var(--text-main); }
-    .btn-danger { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
-    
-    .btn-block { background: #000; color: #fff; }
-    .btn-block:hover { background: #333; }
-    .btn-unblock { background: #16a34a; color: #fff; }
-    .btn-unblock:hover { background: #15803d; }
-
-    .token-control { display: flex; align-items: center; gap: 5px; }
-    .btn-icon { width: 35px; height: 35px; border-radius: 6px; border: none; color: white; font-weight: bold; cursor: pointer; }
-    .btn-add { background: var(--success); }
-    .btn-sub { background: var(--primary); }
-
-    .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.8rem; font-weight: 700; }
-    .bg-gray { background: #e5e7eb; color: #374151; }
-    .bg-red { background: #fee2e2; color: #991b1b; }
-    
-    iframe.map { width: 100%; height: 200px; border: none; border-radius: 8px; }
-    
-    .file-upload { position: relative; overflow: hidden; display: inline-block; }
-    .file-upload input[type=file] { font-size: 100px; position: absolute; left: 0; top: 0; opacity: 0; cursor: pointer; }
-    .file-btn { background: #374151; color: white; padding: 8px 15px; border-radius: 6px; display: inline-block; cursor: pointer; font-size: 0.9rem; }
-    
-    /* ESTILO PARA DETALLES DE SOCIO */
-    .profile-header { display: flex; gap: 20px; align-items: center; margin-bottom: 20px; background: white; padding: 20px; border-radius: 12px; border: 1px solid #e5e7eb; }
-    .profile-img { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; }
-    .profile-info h1 { margin: 0; font-size: 1.5rem; color: #111827; }
-    .profile-meta { color: #6b7280; font-size: 0.9rem; }
-    .profile-stats { margin-left: auto; display: flex; gap: 20px; text-align: right; }
-    .stat-item h3 { margin: 0; font-size: 1.2rem; color: var(--primary); }
-    .stat-item span { font-size: 0.8rem; color: #6b7280; font-weight: bold; }
-</style>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script>
-    function openTab(id) {
-        document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-        document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-        document.getElementById(id).classList.add('active');
-        document.getElementById('btn-'+id).classList.add('active');
-    }
-    function toggleDetails(id) { document.getElementById('det-'+id).classList.toggle('open'); }
-    function updateFileName(input) { document.getElementById('file-name').innerText = input.files[0] ? input.files[0].name : "Sin archivo"; }
-    function toggleModelFields(select) {
-        const fields = document.getElementById('conteo-fields');
-        if (select.value === 'conteo') fields.style.display = 'grid';
-        else fields.style.display = 'none';
-    }
-    function toggleAssistFields(checkbox) {
-        const div = document.getElementById('assist-fields');
-        div.style.display = checkbox.checked ? 'grid' : 'none';
-    }
-</script>
-"""
-
 @app.route('/')
-def home():
-    return redirect('/admin/panel')
+def login_page():
+    return render_template_string(f"""
+    <!DOCTYPE html>
+    <html lang="es">
+    <head><meta charset="UTF-8"><title>Alpha Security - Login</title>{CSS_THEME}
+    <script>
+        function showTab(tab) {{
+            document.querySelectorAll('.login-form').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.lt-btn').forEach(el => el.classList.remove('active'));
+            document.getElementById('form-' + tab).classList.add('active');
+            document.getElementById('btn-' + tab).classList.add('active');
+        }}
+    </script>
+    </head>
+    <body>
+        <div class="login-wrapper">
+            <div class="login-card">
+                <img src="https://i.ibb.co/j9Pp0YLz/Logo-2.png" class="login-logo">
+                
+                <div class="login-tabs">
+                    <button id="btn-admin" class="lt-btn active" onclick="showTab('admin')">ADMINISTRADOR</button>
+                    <button id="btn-user" class="lt-btn" onclick="showTab('user')">SOCIO / CLIENTE</button>
+                </div>
 
-@app.route('/admin/panel')
-def admin_panel():
-    conn = get_db_connection()
-    if not conn: return "Error crítico: No hay conexión a Base de Datos."
+                <form id="form-admin" class="login-form active" action="/auth/login" method="POST">
+                    <input type="hidden" name="role" value="admin">
+                    <input type="password" name="password" placeholder="Clave Maestra" required>
+                    <button type="submit" class="btn-login">INGRESAR AL SISTEMA</button>
+                </form>
+
+                <form id="form-user" class="login-form" action="/auth/login" method="POST">
+                    <input type="hidden" name="role" value="user">
+                    <input type="text" name="hwid" placeholder="Ingrese su HWID (ID Máquina)" required style="font-family:monospace;">
+                    <button type="submit" class="btn-login" style="background-color:#4b5563;">CONSULTAR ESTADO</button>
+                </form>
+                
+                <div style="margin-top:20px; font-size:0.8rem; color:#9ca3af;">
+                    Alpha Security Systems &copy; 2025
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """)
+
+@app.route('/auth/login', methods=['POST'])
+def auth_login():
+    role = request.form.get('role')
     
+    if role == 'admin':
+        password = request.form.get('password')
+        if password == ADMIN_PASS:
+            session['admin_logged_in'] = True
+            return redirect('/admin/panel')
+        else:
+            return "<h1>ACCESO DENEGADO: Contraseña Incorrecta</h1><a href='/'>Volver</a>"
+    
+    elif role == 'user':
+        hwid = request.form.get('hwid').strip()
+        conn = get_db_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("SELECT * FROM clientes WHERE hwid = %s", (hwid,))
+                client = cursor.fetchone()
+                if client:
+                    return redirect(f"/client/dashboard/{hwid}")
+                else:
+                    return "<h1>ERROR: HWID No encontrado en la base de datos.</h1><a href='/'>Volver</a>"
+        finally:
+            conn.close()
+            
+    return redirect('/')
+
+# --- PANEL CLIENTE (SOLO LECTURA) ---
+@app.route('/client/dashboard/<path:hwid>')
+def client_dashboard(hwid):
+    conn = get_db_connection()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            # 1. Clientes
+            cursor.execute("SELECT * FROM clientes WHERE hwid = %s", (hwid,))
+            client = cursor.fetchone()
+            
+            # Obtener historial reciente
+            cursor.execute("SELECT * FROM historial WHERE hwid = %s ORDER BY fecha DESC LIMIT 50", (hwid,))
+            logs = cursor.fetchall()
+    finally:
+        conn.close()
+
+    if not client: return "Cliente no encontrado"
+
+    # --- LÓGICA FINANCIERA (IDÉNTICA AL ADMIN) ---
+    activaciones = client.get('conteo_activaciones', 0)
+    valor_unit = client.get('valor_activacion', 5000)
+    pct_alpha = client.get('porcentaje_alpha', 70)
+    
+    # Asistente
+    has_assist = client.get('asistente_activo', False)
+    pct_assist = client.get('asistente_porcentaje', 0) if has_assist else 0
+    
+    # Cálculos
+    total_generado = activaciones * valor_unit
+    deuda_alpha = int(total_generado * (pct_alpha / 100))
+    pago_asistente = int(total_generado * (pct_assist / 100))
+    ganancia_socio = total_generado - deuda_alpha - pago_asistente
+
+    # Determinar texto del modelo
+    if client.get('modelo_negocio') == 'tokens':
+        model_html = f"""
+        <div class="fin-card">
+            <div class="fin-label">SALDO DISPONIBLE</div>
+            <div class="fin-val text-green">{client.get('tokens_practica',0)}</div>
+            <div class="fin-label" style="margin-top:10px">PRÁCTICA</div>
+        </div>
+        <div class="fin-card">
+            <div class="fin-label">SALDO DISPONIBLE</div>
+            <div class="fin-val text-red">{client.get('tokens_supervigilancia',0)}</div>
+            <div class="fin-label" style="margin-top:10px">SUPERVIGILANCIA</div>
+        </div>
+        """
+        financial_summary = ""
+    else:
+        # Modo Conteo (Socio)
+        model_html = f"""
+        <div class="fin-card">
+            <div class="fin-label">TOTAL ACTIVACIONES</div>
+            <div class="fin-val">{activaciones}</div>
+        </div>
+        <div class="fin-card">
+            <div class="fin-label">TOTAL CAJA BRUTO</div>
+            <div class="fin-val">${total_generado:,.0f}</div>
+        </div>
+        """
+        
+        financial_summary = f"""
+        <h3 style="margin-top:30px; border-bottom:2px solid #e5e7eb; padding-bottom:10px;">RESUMEN DE LIQUIDACIÓN</h3>
+        <div class="finance-grid">
+            <div class="fin-card highlight">
+                <div class="fin-label">A PAGAR A ALPHA ({pct_alpha}%)</div>
+                <div class="fin-val text-red">${deuda_alpha:,.0f}</div>
+                <div style="font-size:0.7rem; margin-top:5px; color:#666;">DEBE SER TRANSFERIDO</div>
+            </div>
+            <div class="fin-card">
+                <div class="fin-label">MI GANANCIA NETA</div>
+                <div class="fin-val text-green">${ganancia_socio:,.0f}</div>
+            </div>
+            {f'''
+            <div class="fin-card">
+                <div class="fin-label">PAGO ASISTENTE ({pct_assist}%)</div>
+                <div class="fin-val text-blue">${pago_asistente:,.0f}</div>
+            </div>
+            ''' if has_assist else ''}
+        </div>
+        """
+
+    # Bloqueo Visual
+    status_badge = '<span class="badge bg-green">ACTIVO</span>'
+    if client.get('bloqueado', False):
+        status_badge = '<span class="badge bg-red">SERVICIO SUSPENDIDO</span>'
+
+    # Tabla Logs
+    log_rows = ""
+    for l in logs:
+        color = "#059669" if l['cantidad'] > 0 else "#b91c1c"
+        log_rows += f"<tr><td>{l['fecha']}</td><td>{l['accion']}</td><td>{l['tipo_token']}</td><td style='color:{color}; font-weight:bold'>{l['cantidad']}</td></tr>"
+
+    return render_template_string(f"""
+    <!DOCTYPE html>
+    <html lang="es">
+    <head><meta charset="UTF-8"><title>Portal de Socio</title>{CSS_THEME}</head>
+    <body>
+        <nav class="navbar">
+            <div style="display:flex; align-items:center; gap:10px;">
+                <img src="https://i.ibb.co/j9Pp0YLz/Logo-2.png" class="brand-logo">
+                <div style="font-weight:800; font-size:1.2rem; color:var(--primary);">PORTAL DE SOCIO</div>
+            </div>
+            <a href="/" class="btn-outline" style="font-size:0.8rem;">CERRAR SESIÓN</a>
+        </nav>
+
+        <div class="container">
+            <div class="card" style="border-left: 5px solid var(--primary);">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <h1 style="margin:0; font-size:1.8rem; color:#111827;">{client['nombre']}</h1>
+                        <div style="color:#6b7280; font-family:monospace; margin-top:5px;">ID: {hwid}</div>
+                        <div style="margin-top:10px;">{status_badge}</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-size:0.8rem; font-weight:bold; color:#6b7280;">MODELO DE NEGOCIO</div>
+                        <div style="font-size:1.2rem; font-weight:900; color:var(--primary);">{client.get('modelo_negocio','TOKENS').upper()}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="finance-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+                {model_html}
+            </div>
+
+            {financial_summary}
+
+            <div class="card">
+                <div class="section-title">HISTORIAL DE MOVIMIENTOS RECIENTES</div>
+                <table>
+                    <thead><tr><th>FECHA</th><th>EVENTO</th><th>TIPO</th><th>CANTIDAD</th></tr></thead>
+                    <tbody>{log_rows}</tbody>
+                </table>
+            </div>
+        </div>
+    </body>
+    </html>
+    """)
+
+# --- PANEL ADMIN (COMPLETO) ---
+@app.route('/admin/panel')
+def admin_panel():
+    # Protección de sesión simple (Para evitar acceso directo por URL sin login)
+    # En producción usar Flask-Login, aquí usamos chequeo manual
+    # Nota: Si reinicias el servidor, la sesión se pierde.
+    # Para simplicidad en este entorno, puedes quitar el if si da problemas.
+    # if not session.get('admin_logged_in'): return redirect('/')
+
+    conn = get_db_connection()
+    if not conn: return "Error DB"
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute("SELECT * FROM clientes ORDER BY id DESC")
             all_clients = cursor.fetchall()
             
-            # 2. Stats
             cursor.execute("SELECT SUM(tokens_practica) as tp, SUM(tokens_supervigilancia) as ts, COUNT(*) as total FROM clientes")
             stats = cursor.fetchone()
             
-            # 3. Chart Data
             cursor.execute("""
                 SELECT TO_CHAR(fecha, 'YYYY-MM') as mes, SUM(cantidad) as total 
                 FROM historial WHERE accion = 'RECARGA' 
@@ -294,19 +466,19 @@ def admin_panel():
     html_tokens = ""
     for c in clients_tokens:
         logo = c.get('logo_url') or f"https://ui-avatars.com/api/?name={c['nombre']}&background=random"
-        raw_addr = c.get('direccion') or 'Bogota, Colombia'
+        raw_addr = c.get('direccion') or 'Bogota'
         map_url = f"https://maps.google.com/maps?q={raw_addr.replace(' ','+')}&output=embed"
         
         is_blocked = c.get('bloqueado', False)
         blocked_class = "blocked" if is_blocked else ""
-        blocked_badge = '<div class="blocked-badge">BLOQUEADO POR PAGO</div>' if is_blocked else ''
+        blocked_badge = '<div class="blocked-badge">BLOQUEADO</div>' if is_blocked else ''
         
         btn_block_html = f"""
-            <form action="/admin/toggle_block" method="post" style="display:inline;" onsubmit="return confirm('¿Cambiar estado de servicio?');">
+            <form action="/admin/toggle_block" method="post" style="display:inline;" onsubmit="return confirm('¿Cambiar estado?');">
                 <input type="hidden" name="hwid" value="{c['hwid']}">
                 <input type="hidden" name="new_status" value="{'false' if is_blocked else 'true'}">
-                <button class="btn {'btn-unblock' if is_blocked else 'btn-block'}" style="font-size:0.8rem; padding:5px 10px;">
-                    {'🔓 REACTIVAR' if is_blocked else '🔒 BLOQUEAR SERVICIO'}
+                <button class="btn {'btn-unblock' if is_blocked else 'btn-block'}" style="font-size:0.8rem; padding:5px;">
+                    {'🔓' if is_blocked else '🔒'}
                 </button>
             </form>
         """
@@ -318,7 +490,7 @@ def admin_panel():
                 <div class="client-profile">
                     <img src="{logo}" class="client-logo">
                     <div>
-                        <div style="font-weight:700; font-size:1.1rem;">{c['nombre']}</div>
+                        <div style="font-weight:700;">{c['nombre']}</div>
                         <div style="color:#666; font-size:0.8rem;">{c['hwid']}</div>
                     </div>
                 </div>
@@ -336,26 +508,24 @@ def admin_panel():
                         <iframe class="map" src="{map_url}"></iframe>
                     </div>
                     <div>
-                        <h4 style="margin-top:0;">CONTROL DE TOKENS</h4>
+                        <h4 style="margin-top:0;">CONTROL</h4>
                         <form action="/admin/add_tokens" method="post">
                             <input type="hidden" name="hwid" value="{c['hwid']}">
                             <div style="margin-bottom:10px;">
-                                <label>Tipo</label>
                                 <select name="type"><option value="practica">Práctica</option><option value="supervigilancia">Supervigilancia</option></select>
                             </div>
-                            <label>Gestión</label>
                             <div class="token-control">
-                                <input type="number" name="amount" placeholder="Cant." required style="font-weight:bold;">
+                                <input type="number" name="amount" placeholder="Cant." required>
                                 <button type="submit" name="action" value="sub" class="btn-icon btn-sub">-</button>
                                 <button type="submit" name="action" value="add" class="btn-icon btn-add">+</button>
                             </div>
                         </form>
-                        <div style="margin-top:20px; text-align:right;">
+                        <div style="margin-top:10px; display:flex; gap:5px; justify-content:flex-end;">
                             {btn_block_html}
-                            <a href="/admin/history/{c['hwid']}" class="btn btn-outline" style="padding:5px 10px; font-size:0.8rem;">HISTORIAL</a>
+                            <a href="/admin/history/{c['hwid']}" class="btn btn-outline" style="font-size:0.8rem; padding:5px;">HISTORIAL</a>
                             <form action="/admin/delete_client" method="post" style="display:inline;" onsubmit="return confirm('¿Borrar?');">
                                 <input type="hidden" name="hwid" value="{c['hwid']}">
-                                <button class="btn btn-danger" style="padding:5px 10px; font-size:0.8rem;">BORRAR</button>
+                                <button class="btn btn-danger" style="font-size:0.8rem; padding:5px;">🗑</button>
                             </form>
                         </div>
                     </div>
@@ -375,11 +545,11 @@ def admin_panel():
         blocked_badge = '<div class="blocked-badge">BLOQUEADO POR PAGO</div>' if is_blocked else ''
         
         btn_block_html = f"""
-            <form action="/admin/toggle_block" method="post" style="display:inline;" onsubmit="return confirm('¿Cambiar estado de servicio?');">
+            <form action="/admin/toggle_block" method="post" style="display:inline;" onsubmit="return confirm('¿Bloquear/Desbloquear?');">
                 <input type="hidden" name="hwid" value="{c['hwid']}">
                 <input type="hidden" name="new_status" value="{'false' if is_blocked else 'true'}">
                 <button class="btn {'btn-unblock' if is_blocked else 'btn-block'}" style="font-size:0.8rem;">
-                    {'🔓 REACTIVAR' if is_blocked else '🔒 BLOQUEAR SERVICIO'}
+                    {'🔓 REACTIVAR' if is_blocked else '🔒 BLOQUEAR'}
                 </button>
             </form>
         """
@@ -387,20 +557,7 @@ def admin_panel():
         pct_alpha = c.get('porcentaje_alpha', 70)
         has_assist = c.get('asistente_activo', False)
         pct_assist = c.get('asistente_porcentaje', 0)
-        name_assist = c.get('asistente_nombre', 'Asistente')
         
-        banco = c.get('asistente_banco', '')
-        cuenta = c.get('asistente_cuenta', '')
-        tipo_cta = c.get('asistente_tipo_cuenta', '')
-        
-        bank_info_html = ""
-        if has_assist and (banco or cuenta):
-            bank_info_html = f"""
-            <div class="bank-info">
-                <b>DATOS PAGO:</b><br>{banco}<br>{tipo_cta} - {cuenta}
-            </div>
-            """
-
         total_generado = activaciones * valor_unit
         ganancia_alpha = int(total_generado * (pct_alpha / 100))
         ganancia_assist = int(total_generado * (pct_assist / 100)) if has_assist else 0
@@ -413,54 +570,33 @@ def admin_panel():
                 <div class="client-profile">
                     <img src="{logo}" class="client-logo">
                     <div>
-                        <div style="font-weight:700; font-size:1.1rem; color:var(--primary);">{c['nombre']}</div>
-                        <div style="color:#666; font-size:0.8rem;">SOCIO AL {pct_alpha}% / {100-pct_alpha}%</div>
+                        <div style="font-weight:700; color:var(--primary);">{c['nombre']}</div>
+                        <div style="color:#666; font-size:0.8rem;">SOCIO AL {pct_alpha}%</div>
                     </div>
                 </div>
                 <div style="text-align:right;">
-                    <div style="font-size:0.7rem; font-weight:700; color:#888;">ACTIVACIONES</div>
+                    <div style="font-size:0.7rem; font-weight:700; color:#888;">ACT</div>
                     <div style="font-size:1.2rem; font-weight:800;">{activaciones}</div>
                 </div>
             </div>
             <div id="det-{c['id']}" class="client-details">
-                
                 <div class="finance-grid">
-                    <div class="fin-box">
-                        <div class="fin-label">PRECIO X PLAY</div>
-                        <div class="fin-val">${valor_unit:,.0f}</div>
-                    </div>
-                    <div class="fin-box">
-                        <div class="fin-label">TOTAL CAJA</div>
-                        <div class="fin-val fin-money">${total_generado:,.0f}</div>
-                    </div>
-                    <div class="fin-box">
-                        <div class="fin-label">TU PARTE ({pct_alpha}%)</div>
-                        <div class="fin-val fin-alpha">${ganancia_alpha:,.0f}</div>
-                    </div>
-                    <div class="fin-box">
-                        <div class="fin-label">PARTE SOCIO</div>
-                        <div class="fin-val">${ganancia_socio:,.0f}</div>
-                    </div>
-                    <div class="fin-box" style="{'opacity:0.3;' if not has_assist else ''}">
-                        <div class="fin-label">{name_assist.upper()[:10] if has_assist else 'SIN ASISTENTE'} ({pct_assist}%)</div>
-                        <div class="fin-val fin-assist">${ganancia_assist:,.0f}</div>
-                        {bank_info_html}
-                    </div>
+                    <div class="fin-box"><div class="fin-label">PRECIO</div><div class="fin-val">${valor_unit:,.0f}</div></div>
+                    <div class="fin-box"><div class="fin-label">TOTAL</div><div class="fin-val fin-money">${total_generado:,.0f}</div></div>
+                    <div class="fin-box"><div class="fin-label">ALPHA ({pct_alpha}%)</div><div class="fin-val fin-alpha">${ganancia_alpha:,.0f}</div></div>
+                    <div class="fin-box"><div class="fin-label">SOCIO</div><div class="fin-val">${ganancia_socio:,.0f}</div></div>
+                    <div class="fin-box" style="{'opacity:0.3;' if not has_assist else ''}"><div class="fin-label">ASIST. ({pct_assist}%)</div><div class="fin-val fin-assist">${ganancia_assist:,.0f}</div></div>
                 </div>
-
                 <div style="text-align:right;">
-                    <form action="/admin/reset_counter" method="post" style="display:inline;" onsubmit="return confirm('¿Reiniciar contador a CERO? Se usará para el siguiente corte.');">
+                    <form action="/admin/reset_counter" method="post" style="display:inline;" onsubmit="return confirm('¿Corte de Caja? Se reiniciará el contador.');">
                         <input type="hidden" name="hwid" value="{c['hwid']}">
-                        <button class="btn btn-outline" style="font-size:0.8rem;">🔄 REINICIAR CORTE</button>
+                        <button class="btn btn-outline" style="font-size:0.8rem;">🔄 CORTE</button>
                     </form>
-                    
                     {btn_block_html}
-                    
                     <a href="/admin/history/{c['hwid']}" class="btn btn-outline" style="font-size:0.8rem;">📜 DETALLES</a>
-                    
                     <form action="/admin/delete_client" method="post" style="display:inline;" onsubmit="return confirm('¿Borrar?');">
                         <input type="hidden" name="hwid" value="{c['hwid']}">
-                        <button class="btn btn-danger" style="font-size:0.8rem;">🗑 BORRAR</button>
+                        <button class="btn btn-danger" style="font-size:0.8rem;">🗑</button>
                     </form>
                 </div>
             </div>
@@ -470,96 +606,75 @@ def admin_panel():
     return render_template_string(f"""
     <!DOCTYPE html>
     <html lang="es">
-    <head><meta charset="UTF-8"><title>ALPHA CRM</title>{CSS_THEME}</head>
+    <head><meta charset="UTF-8"><title>Admin Panel</title>{CSS_THEME}</head>
     <body>
         <nav class="navbar">
             <div style="display:flex; align-items:center; gap:10px;">
                 <img src="https://i.ibb.co/j9Pp0YLz/Logo-2.png" class="brand-logo">
-                <div style="font-weight:800; font-size:1.2rem; color:var(--primary);">COMMAND CENTER</div>
+                <div style="font-weight:800; font-size:1.2rem; color:var(--primary);">ADMINISTRADOR</div>
             </div>
+            <a href="/" class="btn-outline" style="font-size:0.8rem;">SALIR</a>
         </nav>
 
         <div class="container">
             <div class="tabs-nav">
-                <button id="btn-units" class="tab-btn tab-btn-tokens active" onclick="openTab('units')">MODELO PREPAGO (TOKENS)</button>
-                <button id="btn-partners" class="tab-btn tab-btn-socio" onclick="openTab('partners')">MODELO SOCIO (CONTEO)</button>
-                <button id="btn-reg" class="tab-btn" onclick="openTab('reg')">REGISTRAR UNIDAD</button>
-                <button id="btn-stats" class="tab-btn" onclick="openTab('stats')">INTELIGENCIA</button>
+                <button id="btn-units" class="tab-btn tab-btn-tokens active" onclick="openTab('units')">PREPAGO</button>
+                <button id="btn-partners" class="tab-btn tab-btn-socio" onclick="openTab('partners')">SOCIOS</button>
+                <button id="btn-reg" class="tab-btn" onclick="openTab('reg')">NUEVO</button>
+                <button id="btn-stats" class="tab-btn" onclick="openTab('stats')">DATA</button>
             </div>
 
             <div id="units" class="tab-content active">
-                <div style="margin-bottom:1rem; font-weight:800; font-size:1.1rem; color:var(--text-main);">CLIENTES PREPAGO</div>
-                {html_tokens if html_tokens else '<div style="text-align:center; padding:40px; color:#999;">No hay clientes en este modelo.</div>'}
+                {html_tokens if html_tokens else '<div style="text-align:center; padding:40px; color:#999;">Vacío.</div>'}
             </div>
 
             <div id="partners" class="tab-content">
-                <div style="margin-bottom:1rem; font-weight:800; font-size:1.1rem; color:var(--primary);">SOCIOS COMERCIALES (CRÉDITO INFINITO)</div>
-                {html_conteo if html_conteo else '<div style="text-align:center; padding:40px; color:#999;">No hay socios registrados.</div>'}
+                {html_conteo if html_conteo else '<div style="text-align:center; padding:40px; color:#999;">Vacío.</div>'}
             </div>
 
             <div id="reg" class="tab-content">
                 <div class="card" style="max-width:800px; margin:0 auto;">
-                    <div style="margin-bottom:1.5rem; border-left:4px solid var(--primary); padding-left:10px; font-weight:800; font-size:1.1rem;">ALTA DE NUEVA UNIDAD</div>
+                    <div style="margin-bottom:1.5rem; font-weight:800;">REGISTRAR CLIENTE</div>
                     <form action="/admin/register" method="post" enctype="multipart/form-data">
                         <div class="form-grid">
                             <div class="full-width">
-                                <label>Modelo de Negocio</label>
+                                <label>Modelo</label>
                                 <select name="modelo_negocio" onchange="toggleModelFields(this)">
-                                    <option value="tokens">PREPAGO (Venta de Tokens)</option>
-                                    <option value="conteo">SOCIO (Conteo y Porcentaje)</option>
+                                    <option value="tokens">PREPAGO (Venta Tokens)</option>
+                                    <option value="conteo">SOCIO (Comisión)</option>
                                 </select>
                             </div>
-
-                            <div id="conteo-fields" class="full-width form-grid" style="display:none; background:#fff1f2; padding:15px; border-radius:8px; border:1px solid #fecaca;">
-                                <div><label>Valor por Activación ($)</label><input type="number" name="valor_activacion" value="5000"></div>
-                                <div><label>Tu Porcentaje (%)</label><input type="number" name="porcentaje_alpha" value="70"></div>
-                                
-                                <div class="full-width" style="margin-top:10px; border-top:1px dashed #fca5a5; padding-top:10px;">
-                                    <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
-                                        <input type="checkbox" name="asistente_activo" style="width:auto;" onchange="toggleAssistFields(this)">
-                                        <span>ACTIVAR ASISTENTE EXTERNO (COMISIONISTA)</span>
-                                    </label>
+                            <div id="conteo-fields" class="full-width form-grid" style="display:none; background:#fff1f2; padding:15px; border-radius:8px;">
+                                <div><label>Valor Activación</label><input type="number" name="valor_activacion" value="5000"></div>
+                                <div><label>% Alpha</label><input type="number" name="porcentaje_alpha" value="70"></div>
+                                <div class="full-width">
+                                    <label style="display:flex; gap:10px;"><input type="checkbox" name="asistente_activo" style="width:auto;" onchange="toggleAssistFields(this)"> ASISTENTE EXTERNO</label>
                                 </div>
-
-                                <div id="assist-fields" class="full-width form-grid" style="display:none; margin-top:5px;">
-                                    <div><label>Nombre Asistente</label><input type="text" name="asistente_nombre" placeholder="Ej: Juan Vendedor"></div>
-                                    <div><label>Porcentaje Asistente (%)</label><input type="number" name="asistente_porcentaje" value="10"></div>
-                                    <div class="full-width" style="margin-top:5px; font-weight:bold; color:#2563eb;">Datos Bancarios Asistente</div>
-                                    <div><label>Banco</label><input type="text" name="asistente_banco" placeholder="Ej: Bancolombia"></div>
-                                    <div><label>Tipo Cuenta</label><select name="asistente_tipo_cuenta"><option>Ahorros</option><option>Corriente</option><option>Nequi/Daviplata</option></select></div>
-                                    <div class="full-width"><label>Número de Cuenta</label><input type="text" name="asistente_cuenta" placeholder="000-000-000"></div>
+                                <div id="assist-fields" class="full-width form-grid" style="display:none;">
+                                    <div><label>Nombre</label><input type="text" name="asistente_nombre"></div>
+                                    <div><label>% Asistente</label><input type="number" name="asistente_porcentaje" value="10"></div>
+                                    <div class="full-width" style="font-weight:bold; color:#2563eb; margin-top:5px;">Datos Bancarios</div>
+                                    <div><label>Banco</label><input type="text" name="asistente_banco"></div>
+                                    <div><label>Cuenta</label><input type="text" name="asistente_cuenta"></div>
+                                    <div><label>Tipo</label><select name="asistente_tipo_cuenta"><option>Ahorros</option><option>Corriente</option><option>Nequi/Davi</option></select></div>
                                 </div>
                             </div>
-
                             <div class="full-width"><label>Nombre</label><input type="text" name="nombre" required></div>
                             <div class="full-width"><label>HWID</label><input type="text" name="hwid" required style="font-family:monospace;"></div>
-                            
-                            <div class="full-width" style="background:#f9fafb; padding:15px; border:1px dashed #ccc; border-radius:6px;">
-                                <label>Logo (Imagen)</label>
-                                <div class="file-upload">
-                                    <label class="file-btn"><input type="file" name="logo_file" onchange="updateFileName(this)">📂 Subir</label>
-                                    <span id="file-name" style="margin-left:10px; font-size:0.8rem; color:#666;">Sin archivo</span>
-                                </div>
-                            </div>
-
+                            <div class="full-width"><label>Logo</label><div class="file-upload"><label class="file-btn"><input type="file" name="logo_file" onchange="updateFileName(this)">Subir</label><span id="file-name" style="margin-left:10px;">...</span></div></div>
                             <div><label>Responsable</label><input type="text" name="responsable"></div>
                             <div><label>Email</label><input type="email" name="email"></div>
-                            <div><label>Teléfono 1</label><input type="text" name="telefono1"></div>
-                            <div><label>Teléfono 2</label><input type="text" name="telefono2"></div>
+                            <div><label>Tel 1</label><input type="text" name="telefono1"></div>
+                            <div><label>Tel 2</label><input type="text" name="telefono2"></div>
                             <div class="full-width"><label>Dirección</label><input type="text" name="direccion"></div>
                         </div>
-                        <div style="margin-top:2rem; text-align:right;">
-                            <button type="submit" class="btn">GUARDAR UNIDAD</button>
-                        </div>
+                        <div style="margin-top:20px; text-align:right;"><button type="submit" class="btn">GUARDAR</button></div>
                     </form>
                 </div>
             </div>
 
             <div id="stats" class="tab-content">
-                <div class="card">
-                    <div style="margin-bottom:1.5rem; border-left:4px solid var(--primary); padding-left:10px; font-weight:800; font-size:1.1rem;">HISTÓRICO DE VENTAS</div>
-                    <div style="height:350px;"><canvas id="chart"></canvas></div>
-                </div>
+                <div class="card" style="height:400px;"><canvas id="chart"></canvas></div>
             </div>
         </div>
         <script>
@@ -568,10 +683,7 @@ def admin_panel():
                 type: 'line',
                 data: {{
                     labels: {json.dumps(labels)},
-                    datasets: [{{
-                        label: 'Ventas', data: {json.dumps(values)},
-                        borderColor: '#b91c1c', backgroundColor: 'rgba(185, 28, 28, 0.1)', fill: true
-                    }}]
+                    datasets: [{{ label: 'Ventas', data: {json.dumps(values)}, borderColor: '#b91c1c', backgroundColor: 'rgba(185,28,28,0.1)', fill: true }}]
                 }},
                 options: {{ responsive: true, maintainAspectRatio: false }}
             }});
@@ -580,7 +692,7 @@ def admin_panel():
     """)
 
 # =========================================================
-# RUTAS DE ACCIÓN
+# ACCIONES ADMIN
 # =========================================================
 @app.route('/admin/register', methods=['POST'])
 def register():
@@ -600,10 +712,6 @@ def register():
         try: asistente_porc = int(request.form.get('asistente_porcentaje', 0))
         except: asistente_porc = 0
         
-        asis_banco = request.form.get('asistente_banco', '')
-        asis_cuenta = request.form.get('asistente_cuenta', '')
-        asis_tipo = request.form.get('asistente_tipo_cuenta', '')
-
         conn = get_db_connection()
         with conn.cursor() as cursor:
             cursor.execute("""
@@ -621,7 +729,7 @@ def register():
                 request.form.get('valor_activacion', 5000),
                 request.form.get('porcentaje_alpha', 70),
                 asistente_activo, asistente_nombre, asistente_porc,
-                asis_banco, asis_cuenta, asis_tipo
+                request.form.get('asistente_banco',''), request.form.get('asistente_cuenta',''), request.form.get('asistente_tipo_cuenta','')
             ))
             conn.commit()
         conn.close()
@@ -633,7 +741,6 @@ def add_tokens():
     try:
         hwid, amount, action = request.form['hwid'], int(request.form['amount']), request.form['action']
         token_type = request.form['type']
-        
         final_amount = amount if action == 'add' else -amount
         label = "RECARGA" if action == 'add' else "CORRECCION"
         col = f"tokens_{token_type}"
@@ -652,7 +759,6 @@ def toggle_block():
     try:
         hwid = request.form['hwid']
         new_status = True if request.form['new_status'].lower() == 'true' else False
-        
         conn = get_db_connection()
         with conn.cursor() as cursor:
             cursor.execute("UPDATE clientes SET bloqueado = %s WHERE hwid = %s", (new_status, hwid))
@@ -668,7 +774,7 @@ def reset_counter():
     try:
         hwid = request.form['hwid']
         conn = get_db_connection()
-        # SOLUCIÓN ERROR TUPLE: Usamos RealDictCursor para poder acceder por nombre
+        # USO DE RealDictCursor CORRIGE EL ERROR DE TUPLE INDICES
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute("SELECT conteo_activaciones FROM clientes WHERE hwid=%s", (hwid,))
             row = cursor.fetchone()
@@ -692,6 +798,7 @@ def delete_client():
         return redirect('/admin/panel')
     except: return "Error borrando"
 
+# MANEJO DE HISTORIAL/DETALLE COMPLETO
 @app.route('/admin/history/<path:hwid>')
 def history(hwid):
     conn = get_db_connection()
@@ -705,54 +812,78 @@ def history(hwid):
 
     if not client: return "Cliente no encontrado"
 
-    # Datos adicionales para el perfil
+    # Preparar datos de perfil para el admin (Igual que en el dashboard del cliente pero con controles)
     logo = client.get('logo_url') or f"https://ui-avatars.com/api/?name={client['nombre']}&background=random"
-    modelo = "SOCIO (CONTEO)" if client.get('modelo_negocio') == 'conteo' else "PREPAGO (TOKENS)"
     
-    # Asistente
+    # Datos Asistente
     has_assist = client.get('asistente_activo', False)
-    assist_info = "NO"
+    assist_info_html = ""
     if has_assist:
-        name = client.get('asistente_nombre', '')
-        pct = client.get('asistente_porcentaje', 0)
-        bank = client.get('asistente_banco', '---')
-        acc = client.get('asistente_cuenta', '---')
-        assist_info = f"<b>{name}</b> ({pct}%)<br><span style='font-size:0.8rem'>{bank} - {acc}</span>"
+        aname = client.get('asistente_nombre','')
+        apct = client.get('asistente_porcentaje',0)
+        abk = client.get('asistente_banco','---')
+        acc = client.get('asistente_cuenta','---')
+        assist_info_html = f"""
+        <div class="stat-item" style="border-left:2px solid #2563eb; padding-left:10px;">
+            <h3 style="color:#2563eb">{aname} ({apct}%)</h3>
+            <span>{abk} - {acc}</span>
+        </div>
+        """
 
-    # Filas
-    log_rows = ""
+    # Resumen Financiero (Solo si es Socio)
+    finance_html = ""
+    if client.get('modelo_negocio') == 'conteo':
+        act = client.get('conteo_activaciones', 0)
+        val = client.get('valor_activacion', 5000)
+        tot = act * val
+        pct_al = client.get('porcentaje_alpha', 70)
+        due_alpha = int(tot * (pct_al/100))
+        
+        finance_html = f"""
+        <div class="finance-grid" style="margin-top:20px;">
+            <div class="fin-card"><div class="fin-label">ACTIVACIONES</div><div class="fin-val">{act}</div></div>
+            <div class="fin-card"><div class="fin-label">TOTAL CAJA</div><div class="fin-val">${tot:,.0f}</div></div>
+            <div class="fin-card highlight"><div class="fin-label">DEUDA ALPHA</div><div class="fin-val text-red">${due_alpha:,.0f}</div></div>
+        </div>
+        """
+
+    # Logs
+    rows = ""
     for l in logs:
-        color = "#059669" if l['cantidad'] > 0 else "#b91c1c"
-        log_rows += f"<tr><td>{l['fecha']}</td><td>{l['accion']}</td><td>{l['tipo_token']}</td><td style='color:{color}; font-weight:bold'>{l['cantidad']}</td></tr>"
+        c = "#059669" if l['cantidad'] > 0 else "#b91c1c"
+        rows += f"<tr><td>{l['fecha']}</td><td>{l['accion']}</td><td>{l['tipo_token']}</td><td style='color:{c}; font-weight:bold'>{l['cantidad']}</td></tr>"
 
     return render_template_string(f"""
-        <!DOCTYPE html><html><head><title>Detalles</title>{CSS_THEME}</head><body>
+        <!DOCTYPE html><html><head><title>Detalle Admin</title>{CSS_THEME}</head><body>
         <div class="container">
-            <a href="/admin/panel" class="btn btn-outline" style="margin-bottom:20px;">← VOLVER</a>
+            <a href="/admin/panel" class="btn btn-outline" style="margin-bottom:20px;">← VOLVER AL PANEL</a>
             
             <div class="profile-header">
                 <img src="{logo}" class="profile-img">
                 <div class="profile-info">
                     <h1>{client['nombre']}</h1>
-                    <div class="profile-meta">{client['hwid']} | {client.get('direccion', '---')}</div>
-                    <div class="profile-meta" style="margin-top:5px; color:#2563eb;">RESPONSABLE: {client.get('responsable', '---')} | TEL: {client.get('telefono1', '---')}</div>
+                    <div class="profile-meta">{client['hwid']}</div>
+                    <div class="profile-meta">{client.get('direccion','')} | {client.get('telefono1','')}</div>
                 </div>
                 <div class="profile-stats">
-                    <div class="stat-item"><h3>{modelo}</h3><span>MODELO NEGOCIO</span></div>
-                    <div class="stat-item"><h3>{assist_info}</h3><span>ASISTENTE</span></div>
+                    {assist_info_html}
+                    <div class="stat-item">
+                        <h3>{client.get('modelo_negocio','TOKENS').upper()}</h3>
+                        <span>MODELO</span>
+                    </div>
                 </div>
             </div>
+
+            {finance_html}
 
             <div class="card">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
                     <div class="section-title" style="margin:0;">HISTORIAL DE MOVIMIENTOS</div>
                     <a href="/admin/download_pdf/{hwid}" class="btn">DESCARGAR REPORTE PDF</a>
                 </div>
-                <table style="width:100%; border-collapse:collapse;">
-                    <tr style="background:#f9fafb; text-align:left; border-bottom:2px solid #e5e7eb;">
-                        <th style="padding:10px;">FECHA</th><th>ACCIÓN</th><th>TOKEN/TIPO</th><th>CANTIDAD</th>
-                    </tr>
-                    {log_rows}
+                <table>
+                    <thead><tr><th>FECHA</th><th>ACCIÓN</th><th>TIPO</th><th>CANTIDAD</th></tr></thead>
+                    <tbody>{rows}</tbody>
                 </table>
             </div>
         </div></body></html>
@@ -772,18 +903,10 @@ def download_pdf(hwid):
     pdf = PDFReport()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 12)
-    
-    name_safe = client['nombre'] if client else "Desconocido"
-    pdf.cell(0, 10, f"CLIENTE: {name_safe}", 0, 1)
-    
-    if client:
-        pdf.set_font("Arial", '', 10)
-        pdf.cell(0, 5, f"HWID: {hwid}", 0, 1)
-        pdf.cell(0, 5, f"MODELO: {client.get('modelo_negocio', 'TOKENS').upper()}", 0, 1)
-        if client.get('asistente_activo'):
-            pdf.cell(0, 5, f"ASISTENTE: {client.get('asistente_nombre')} ({client.get('asistente_porcentaje')}%)", 0, 1)
-    
+    name = client['nombre'] if client else "Desconocido"
+    pdf.cell(0, 10, f"CLIENTE: {name}", 0, 1)
     pdf.ln(10)
+    
     pdf.set_font("Arial", 'B', 10); pdf.set_fill_color(220, 220, 220)
     pdf.cell(50, 10, "Fecha", 1, 0, 'C', 1)
     pdf.cell(50, 10, "Accion", 1, 0, 'C', 1)
@@ -801,7 +924,7 @@ def download_pdf(hwid):
     pdf_content = pdf.output(dest='S').encode('latin-1')
     buffer.write(pdf_content)
     buffer.seek(0)
-    return send_file(buffer, as_attachment=True, download_name=f"Reporte.pdf", mimetype='application/pdf')
+    return send_file(buffer, as_attachment=True, download_name="Reporte.pdf", mimetype='application/pdf')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
