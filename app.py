@@ -207,6 +207,11 @@ CSS_THEME = """
     .bg-red { background: #fee2e2; color: #991b1b; }
     
     iframe.map { width: 100%; height: 200px; border: none; border-radius: 8px; }
+    
+    /* UPLOAD FILE */
+    .file-upload { position: relative; overflow: hidden; display: inline-block; }
+    .file-upload input[type=file] { font-size: 100px; position: absolute; left: 0; top: 0; opacity: 0; cursor: pointer; }
+    .file-btn { background: #374151; color: white; padding: 8px 15px; border-radius: 6px; display: inline-block; cursor: pointer; font-size: 0.9rem; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
@@ -256,7 +261,12 @@ def admin_panel():
     html_tokens = ""
     for c in clients_tokens:
         logo = c.get('logo_url') or f"https://ui-avatars.com/api/?name={c['nombre']}&background=random"
-        map_url = f"https://maps.google.com/maps?q={c.get('direccion','Bogota').replace(' ','+')}&output=embed"
+        
+        # --- CORRECCIÓN DE ERROR 500 ---
+        # Si la dirección es NULL, se usa 'Bogota, Colombia' por defecto para evitar el error .replace()
+        raw_addr = c.get('direccion')
+        if not raw_addr: raw_addr = 'Bogota, Colombia'
+        map_url = f"https://maps.google.com/maps?q={raw_addr.replace(' ','+')}&output=embed"
         
         html_tokens += f"""
         <div class="client-item">
@@ -394,18 +404,18 @@ def admin_panel():
             </div>
 
             <div id="units" class="tab-content active">
-                <div class="section-title" style="border-color:var(--secondary);">CLIENTES PREPAGO</div>
+                <div style="margin-bottom:1rem; font-weight:800; font-size:1.1rem; color:var(--text-main);">CLIENTES PREPAGO</div>
                 {html_tokens if html_tokens else '<div style="text-align:center; padding:40px; color:#999;">No hay clientes en este modelo.</div>'}
             </div>
 
             <div id="partners" class="tab-content">
-                <div class="section-title">SOCIOS COMERCIALES (CRÉDITO INFINITO)</div>
+                <div style="margin-bottom:1rem; font-weight:800; font-size:1.1rem; color:var(--primary);">SOCIOS COMERCIALES (CRÉDITO INFINITO)</div>
                 {html_conteo if html_conteo else '<div style="text-align:center; padding:40px; color:#999;">No hay socios registrados.</div>'}
             </div>
 
             <div id="reg" class="tab-content">
                 <div class="card" style="max-width:800px; margin:0 auto;">
-                    <div class="section-title">ALTA DE NUEVA UNIDAD</div>
+                    <div style="margin-bottom:1.5rem; border-left:4px solid var(--primary); padding-left:10px; font-weight:800; font-size:1.1rem;">ALTA DE NUEVA UNIDAD</div>
                     <form action="/admin/register" method="post" enctype="multipart/form-data">
                         <div class="form-grid">
                             <div class="full-width">
@@ -447,7 +457,7 @@ def admin_panel():
 
             <div id="stats" class="tab-content">
                 <div class="card">
-                    <div class="section-title">VENTAS (TOKENS PREPAGO)</div>
+                    <div style="margin-bottom:1.5rem; border-left:4px solid var(--primary); padding-left:10px; font-weight:800; font-size:1.1rem;">HISTÓRICO DE VENTAS</div>
                     <div style="height:350px;"><canvas id="chart"></canvas></div>
                 </div>
             </div>
@@ -532,12 +542,9 @@ def reset_counter():
         hwid = request.form['hwid']
         conn = get_db_connection()
         with conn.cursor() as cursor:
-            # Guardamos el corte en el historial antes de borrar
             cursor.execute("SELECT conteo_activaciones FROM clientes WHERE hwid=%s", (hwid,))
             total = cursor.fetchone()['conteo_activaciones']
             cursor.execute("INSERT INTO historial (hwid, accion, cantidad, tipo_token) VALUES (%s, 'CORTE_CAJA', %s, 'conteo')", (hwid, total))
-            
-            # Reiniciar
             cursor.execute("UPDATE clientes SET conteo_activaciones = 0 WHERE hwid = %s", (hwid,))
             conn.commit()
         conn.close()
