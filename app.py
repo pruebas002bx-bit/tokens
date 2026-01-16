@@ -58,7 +58,7 @@ class PDFReport(FPDF):
         self.cell(0, 10, f'Pagina {self.page_no()}', 0, 0, 'C')
 
 # =========================================================
-# API (LÓGICA HÍBRIDA: TOKENS vs CONTEO)
+# API
 # =========================================================
 @app.route('/api/check_tokens', methods=['POST'])
 def check_tokens():
@@ -83,7 +83,6 @@ def check_tokens():
 
                 modelo = client.get('modelo_negocio', 'tokens')
 
-                # --- LÓGICA MODELO 1: PREPAGO (TOKENS) ---
                 if modelo == 'tokens':
                     col = f"tokens_{token_type}"
                     if client.get(col, 0) > 0:
@@ -97,13 +96,10 @@ def check_tokens():
                     else:
                         return jsonify({"status": "denied", "msg": "Sin saldo", "type": token_type}), 402
 
-                # --- LÓGICA MODELO 2: SOCIO (CONTEO / INFINITO) ---
-                else:
-                    # No descontamos, solo sumamos al contador global
+                else: # CONTEO
                     cursor.execute("UPDATE clientes SET conteo_activaciones = conteo_activaciones + 1 WHERE hwid = %s", (hwid,))
                     cursor.execute("INSERT INTO historial (hwid, accion, cantidad, tipo_token) VALUES (%s, 'ACTIVACION_SOCIO', 1, %s)", (hwid, token_type))
                     conn.commit()
-                    
                     return jsonify({"status": "success", "remaining": 999999, "type": token_type, "mode": "conteo"})
 
         finally:
@@ -121,15 +117,14 @@ CSS_THEME = """
 
     :root {
         --primary: #b91c1c; 
-        --primary-hover: #991b1b;
-        --secondary: #4b5563; /* Gris para modelo Tokens */
+        --secondary: #4b5563;
         --bg: #f3f4f6;
         --surface: #ffffff;
         --text-main: #1f2937;
-        --text-muted: #6b7280;
         --border: #e5e7eb;
         --success: #059669;
         --money: #047857;
+        --assist: #2563eb; /* Azul para el asistente */
     }
 
     * { box-sizing: border-box; }
@@ -143,21 +138,17 @@ CSS_THEME = """
 
     .container { max-width: 1400px; margin: 2rem auto; padding: 0 1.5rem; }
 
-    /* TABS PRINCIPALES (ROJO VS GRIS) */
+    /* TABS */
     .tabs-nav { display: flex; gap: 1rem; margin-bottom: 2rem; border-bottom: 2px solid var(--border); padding-bottom: 1px; }
     .tab-btn {
         background: transparent; border: none; padding: 1rem 1.5rem; font-size: 0.95rem; font-weight: 700;
-        color: var(--text-muted); cursor: pointer; position: relative; transition: all 0.3s;
+        color: #6b7280; cursor: pointer; position: relative; transition: all 0.3s;
         border-radius: 8px 8px 0 0;
     }
     .tab-btn:hover { background: #e5e7eb; }
-    
-    /* Estilo Activo Genérico */
     .tab-btn.active { background: var(--surface); border: 1px solid var(--border); border-bottom: 2px solid var(--surface); margin-bottom: -2px; color: var(--text-main); }
     
-    /* Pestaña Roja (Socio) */
     .tab-btn-socio.active { border-top: 4px solid var(--primary); color: var(--primary); }
-    /* Pestaña Gris (Tokens) */
     .tab-btn-tokens.active { border-top: 4px solid var(--secondary); color: var(--secondary); }
 
     .tab-content { display: none; animation: fadeIn 0.4s ease; }
@@ -167,31 +158,32 @@ CSS_THEME = """
     /* CARDS */
     .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 1.5rem; }
     
-    /* FORM */
     .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.5rem; }
     .full-width { grid-column: 1 / -1; }
-    label { display: block; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); margin-bottom: 5px; text-transform: uppercase; }
+    label { display: block; font-size: 0.75rem; font-weight: 700; color: #6b7280; margin-bottom: 5px; text-transform: uppercase; }
     input, select { width: 100%; padding: 0.7rem; border: 1px solid var(--border); border-radius: 6px; font-family: inherit; }
-    input:focus { border-color: var(--primary); outline: none; }
-
-    /* LISTAS */
-    .client-item { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 1rem; overflow: hidden; transition: all 0.2s; }
-    .client-item:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,0,0,0.05); }
+    
+    /* CLIENT LIST */
+    .client-item { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 1rem; overflow: hidden; }
     .client-header { padding: 1.2rem; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
     .client-profile { display: flex; align-items: center; gap: 15px; }
     .client-logo { width: 50px; height: 50px; border-radius: 50%; object-fit: cover; border: 2px solid #eee; }
     .client-details { padding: 1.5rem; background: #fcfcfc; border-top: 1px solid var(--border); display: none; }
     .client-details.open { display: block; }
 
-    /* FINANCIAL GRID */
-    .finance-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 15px; }
+    /* FINANCE GRID (5 Columnas para incluir Asistente) */
+    .finance-grid { 
+        display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; 
+        background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 15px; 
+    }
     .fin-box { text-align: center; }
     .fin-label { font-size: 0.7rem; color: #64748b; font-weight: bold; }
     .fin-val { font-size: 1.1rem; font-weight: 800; color: #0f172a; }
     .fin-money { color: var(--money); }
     .fin-alpha { color: var(--primary); }
+    .fin-assist { color: var(--assist); }
 
-    /* BOTONES */
+    /* BUTTONS */
     .btn { background: var(--primary); color: white; padding: 0.7rem 1.5rem; border-radius: 6px; font-weight: 700; border: none; cursor: pointer; text-decoration: none; display: inline-block; font-size: 0.9rem; }
     .btn:hover { background: var(--primary-hover); }
     .btn-outline { background: white; border: 1px solid var(--border); color: var(--text-main); }
@@ -208,7 +200,6 @@ CSS_THEME = """
     
     iframe.map { width: 100%; height: 200px; border: none; border-radius: 8px; }
     
-    /* UPLOAD FILE */
     .file-upload { position: relative; overflow: hidden; display: inline-block; }
     .file-upload input[type=file] { font-size: 100px; position: absolute; left: 0; top: 0; opacity: 0; cursor: pointer; }
     .file-btn { background: #374151; color: white; padding: 8px 15px; border-radius: 6px; display: inline-block; cursor: pointer; font-size: 0.9rem; }
@@ -228,6 +219,10 @@ CSS_THEME = """
         if (select.value === 'conteo') fields.style.display = 'grid';
         else fields.style.display = 'none';
     }
+    function toggleAssistFields(checkbox) {
+        const div = document.getElementById('assist-fields');
+        div.style.display = checkbox.checked ? 'grid' : 'none';
+    }
 </script>
 """
 
@@ -238,22 +233,30 @@ def home():
 @app.route('/admin/panel')
 def admin_panel():
     conn = get_db_connection()
-    if not conn: return "Error DB"
+    if not conn: return "Error crítico: No hay conexión a Base de Datos."
+    
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            # Clientes
+            # 1. Clientes
             cursor.execute("SELECT * FROM clientes ORDER BY id DESC")
             all_clients = cursor.fetchall()
             
-            # Estadísticas Gráfica
-            cursor.execute("SELECT TO_CHAR(fecha, 'YYYY-MM') as mes, SUM(cantidad) as total FROM historial WHERE accion = 'RECARGA' GROUP BY mes ORDER BY mes ASC LIMIT 12")
+            # 2. Stats
+            cursor.execute("SELECT SUM(tokens_practica) as tp, SUM(tokens_supervigilancia) as ts, COUNT(*) as total FROM clientes")
+            stats = cursor.fetchone()
+            
+            # 3. Chart Data
+            cursor.execute("""
+                SELECT TO_CHAR(fecha, 'YYYY-MM') as mes, SUM(cantidad) as total 
+                FROM historial WHERE accion = 'RECARGA' 
+                GROUP BY mes ORDER BY mes ASC LIMIT 12
+            """)
             chart = cursor.fetchall()
             labels = [r['mes'] for r in chart]
             values = [r['total'] for r in chart]
     finally:
         conn.close()
 
-    # Separar clientes por modelo
     clients_tokens = [c for c in all_clients if c.get('modelo_negocio') != 'conteo']
     clients_conteo = [c for c in all_clients if c.get('modelo_negocio') == 'conteo']
 
@@ -261,9 +264,6 @@ def admin_panel():
     html_tokens = ""
     for c in clients_tokens:
         logo = c.get('logo_url') or f"https://ui-avatars.com/api/?name={c['nombre']}&background=random"
-        
-        # --- CORRECCIÓN DE ERROR 500 ---
-        # Si la dirección es NULL, se usa 'Bogota, Colombia' por defecto para evitar el error .replace()
         raw_addr = c.get('direccion')
         if not raw_addr: raw_addr = 'Bogota, Colombia'
         map_url = f"https://maps.google.com/maps?q={raw_addr.replace(' ','+')}&output=embed"
@@ -325,12 +325,21 @@ def admin_panel():
         logo = c.get('logo_url') or f"https://ui-avatars.com/api/?name={c['nombre']}&background=random"
         activaciones = c.get('conteo_activaciones', 0)
         valor_unit = c.get('valor_activacion', 5000)
-        pct_alpha = c.get('porcentaje_alpha', 70)
         
-        # Cálculos Financieros
+        # Porcentajes
+        pct_alpha = c.get('porcentaje_alpha', 70)
+        has_assist = c.get('asistente_activo', False)
+        pct_assist = c.get('asistente_porcentaje', 0)
+        name_assist = c.get('asistente_nombre', 'Asistente')
+        
+        # Cálculos Financieros (DIVISIÓN DE 3 PARTES)
         total_generado = activaciones * valor_unit
+        
         ganancia_alpha = int(total_generado * (pct_alpha / 100))
-        ganancia_socio = total_generado - ganancia_alpha
+        ganancia_assist = int(total_generado * (pct_assist / 100)) if has_assist else 0
+        
+        # El socio (dueño del local) se queda con el resto
+        ganancia_socio = total_generado - ganancia_alpha - ganancia_assist
 
         html_conteo += f"""
         <div class="client-item" style="border-left: 5px solid var(--primary);">
@@ -366,6 +375,10 @@ def admin_panel():
                         <div class="fin-label">PARTE SOCIO</div>
                         <div class="fin-val">${ganancia_socio:,.0f}</div>
                     </div>
+                    <div class="fin-box" style="{'opacity:0.3;' if not has_assist else ''}">
+                        <div class="fin-label">{name_assist.upper() if has_assist else 'SIN ASISTENTE'} ({pct_assist}%)</div>
+                        <div class="fin-val fin-assist">${ganancia_assist:,.0f}</div>
+                    </div>
                 </div>
 
                 <div style="text-align:right;">
@@ -373,7 +386,9 @@ def admin_panel():
                         <input type="hidden" name="hwid" value="{c['hwid']}">
                         <button class="btn btn-outline" style="font-size:0.8rem;">🔄 REINICIAR CORTE</button>
                     </form>
+                    
                     <a href="/admin/history/{c['hwid']}" class="btn btn-outline" style="font-size:0.8rem;">📜 DETALLES</a>
+                    
                     <form action="/admin/delete_client" method="post" style="display:inline;" onsubmit="return confirm('¿Borrar?');">
                         <input type="hidden" name="hwid" value="{c['hwid']}">
                         <button class="btn btn-danger" style="font-size:0.8rem;">🗑 BORRAR</button>
@@ -429,6 +444,18 @@ def admin_panel():
                             <div id="conteo-fields" class="full-width form-grid" style="display:none; background:#fff1f2; padding:15px; border-radius:8px; border:1px solid #fecaca;">
                                 <div><label>Valor por Activación ($)</label><input type="number" name="valor_activacion" value="5000"></div>
                                 <div><label>Tu Porcentaje (%)</label><input type="number" name="porcentaje_alpha" value="70"></div>
+                                
+                                <div class="full-width" style="margin-top:10px; border-top:1px dashed #fca5a5; padding-top:10px;">
+                                    <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+                                        <input type="checkbox" name="asistente_activo" style="width:auto;" onchange="toggleAssistFields(this)">
+                                        <span>ACTIVAR ASISTENTE EXTERNO (COMISIONISTA)</span>
+                                    </label>
+                                </div>
+
+                                <div id="assist-fields" class="full-width form-grid" style="display:none; margin-top:5px;">
+                                    <div><label>Nombre Asistente</label><input type="text" name="asistente_nombre" placeholder="Ej: Juan Vendedor"></div>
+                                    <div><label>Porcentaje Asistente (%)</label><input type="number" name="asistente_porcentaje" value="10"></div>
+                                </div>
                             </div>
 
                             <div class="full-width"><label>Nombre</label><input type="text" name="nombre" required></div>
@@ -485,7 +512,6 @@ def admin_panel():
 @app.route('/admin/register', methods=['POST'])
 def register():
     try:
-        # Subida ImgBB
         logo_url = ""
         file = request.files.get('logo_file')
         if file and file.filename != '':
@@ -496,13 +522,20 @@ def register():
                 if res.status_code == 200: logo_url = res.json()['data']['url']
             except: pass
 
+        # Datos del Asistente
+        asistente_activo = True if request.form.get('asistente_activo') == 'on' else False
+        asistente_nombre = request.form.get('asistente_nombre', '')
+        try: asistente_porc = int(request.form.get('asistente_porcentaje', 0))
+        except: asistente_porc = 0
+
         conn = get_db_connection()
         with conn.cursor() as cursor:
             cursor.execute("""
                 INSERT INTO clientes 
                 (nombre, hwid, responsable, telefono1, telefono2, email, direccion, logo_url, 
-                 tokens_supervigilancia, tokens_practica, modelo_negocio, valor_activacion, porcentaje_alpha) 
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0, 0, %s, %s, %s)
+                 tokens_supervigilancia, tokens_practica, modelo_negocio, valor_activacion, porcentaje_alpha,
+                 asistente_activo, asistente_nombre, asistente_porcentaje) 
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0, 0, %s, %s, %s, %s, %s, %s)
             """, (
                 request.form['nombre'], request.form['hwid'],
                 request.form.get('responsable',''), request.form.get('telefono1',''),
@@ -510,7 +543,8 @@ def register():
                 request.form.get('direccion',''), logo_url,
                 request.form.get('modelo_negocio','tokens'),
                 request.form.get('valor_activacion', 5000),
-                request.form.get('porcentaje_alpha', 70)
+                request.form.get('porcentaje_alpha', 70),
+                asistente_activo, asistente_nombre, asistente_porc
             ))
             conn.commit()
         conn.close()
@@ -562,7 +596,47 @@ def delete_client():
         return redirect('/admin/panel')
     except: return "Error borrando"
 
-@app.route('/admin/download_pdf/<hwid>')
+# USAR <path:hwid> PARA QUE ACEPTE BARRAS Y ESPACIOS SIN DAR ERROR 404
+@app.route('/admin/history/<path:hwid>')
+def history(hwid):
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute("SELECT * FROM clientes WHERE hwid = %s", (hwid,))
+            client = cursor.fetchone()
+            cursor.execute("SELECT * FROM historial WHERE hwid = %s ORDER BY fecha DESC", (hwid,))
+            logs = cursor.fetchall()
+    finally: conn.close()
+
+    pdf_link = f"/admin/download_pdf/{hwid}"
+    
+    pdf_report = PDFReport()
+    # ... (Generación PDF en memoria solo si se llama a download_pdf)
+
+    # Filas
+    log_rows = ""
+    for l in logs:
+        color = "#059669" if l['cantidad'] > 0 else "#b91c1c"
+        log_rows += f"<tr><td>{l['fecha']}</td><td>{l['accion']}</td><td>{l['tipo_token']}</td><td style='color:{color}; font-weight:bold'>{l['cantidad']}</td></tr>"
+
+    return render_template_string(f"""
+        <!DOCTYPE html><html><head><title>Logs</title>{CSS_THEME}</head><body>
+        <div class="container" style="max-width:900px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                <a href="/admin/panel" class="btn btn-outline">← VOLVER</a>
+                <a href="{pdf_link}" class="btn">DESCARGAR REPORTE PDF</a>
+            </div>
+            <div class="card">
+                <div class="section-title">HISTORIAL: {client['nombre'] if client else 'DESCONOCIDO'}</div>
+                <table style="width:100%; border-collapse:collapse;">
+                    <tr style="background:#f9fafb; text-align:left;"><th style="padding:10px;">FECHA</th><th>ACCIÓN</th><th>TOKEN</th><th>CANT.</th></tr>
+                    {log_rows}
+                </table>
+            </div>
+        </div></body></html>
+    """)
+
+@app.route('/admin/download_pdf/<path:hwid>')
 def download_pdf(hwid):
     conn = get_db_connection()
     try:
@@ -576,23 +650,28 @@ def download_pdf(hwid):
     pdf = PDFReport()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, f"CLIENTE: {client['nombre']}", 0, 1)
-    if client.get('modelo_negocio') == 'conteo':
-        pdf.cell(0, 5, f"MODELO: SOCIO ({client['porcentaje_alpha']}% ALPHA)", 0, 1)
-    else:
-        pdf.cell(0, 5, "MODELO: PREPAGO TOKENS", 0, 1)
+    name_safe = client['nombre'] if client else "Desconocido"
+    pdf.cell(0, 10, f"CLIENTE: {name_safe}", 0, 1)
+    
+    if client:
+        if client.get('modelo_negocio') == 'conteo':
+            pdf.cell(0, 5, f"MODELO: SOCIO ({client['porcentaje_alpha']}% ALPHA)", 0, 1)
+        else:
+            pdf.cell(0, 5, "MODELO: PREPAGO TOKENS", 0, 1)
     
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 10); pdf.set_fill_color(220, 220, 220)
     pdf.cell(50, 10, "Fecha", 1, 0, 'C', 1)
     pdf.cell(50, 10, "Accion", 1, 0, 'C', 1)
-    pdf.cell(40, 10, "Cant/Valor", 1, 1, 'C', 1)
+    pdf.cell(40, 10, "Tipo", 1, 0, 'C', 1)
+    pdf.cell(30, 10, "Cant.", 1, 1, 'C', 1)
     
     pdf.set_font("Arial", '', 9)
     for log in logs:
         pdf.cell(50, 8, str(log['fecha']), 1)
         pdf.cell(50, 8, str(log['accion']), 1)
-        pdf.cell(40, 8, str(log['cantidad']), 1, 1, 'C')
+        pdf.cell(40, 8, str(log['tipo_token']), 1)
+        pdf.cell(30, 8, str(log['cantidad']), 1, 1, 'C')
 
     buffer = io.BytesIO()
     pdf_content = pdf.output(dest='S').encode('latin-1')
