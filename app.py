@@ -58,7 +58,7 @@ class PDFReport(FPDF):
         self.cell(0, 10, f'Pagina {self.page_no()}', 0, 0, 'C')
 
 # =========================================================
-# API
+# API (CON KILL SWITCH INTEGRADO)
 # =========================================================
 @app.route('/api/check_tokens', methods=['POST'])
 def check_tokens():
@@ -80,6 +80,15 @@ def check_tokens():
 
                 if not client:
                     return jsonify({"status": "error", "msg": "No registrado"}), 404
+
+                # --- KILL SWITCH: VERIFICAR BLOQUEO POR PAGO ---
+                if client.get('bloqueado', False):
+                    # Retornamos error 403 para que el software cliente se detenga
+                    return jsonify({
+                        "status": "error", 
+                        "msg": "SISTEMA BLOQUEADO ADMINISTRATIVAMENTE. CONTACTE A SOPORTE."
+                    }), 403
+                # -----------------------------------------------
 
                 modelo = client.get('modelo_negocio', 'tokens')
 
@@ -124,7 +133,7 @@ CSS_THEME = """
         --border: #e5e7eb;
         --success: #059669;
         --money: #047857;
-        --assist: #2563eb; /* Azul para el asistente */
+        --assist: #2563eb; 
     }
 
     * { box-sizing: border-box; }
@@ -164,14 +173,24 @@ CSS_THEME = """
     input, select { width: 100%; padding: 0.7rem; border: 1px solid var(--border); border-radius: 6px; font-family: inherit; }
     
     /* CLIENT LIST */
-    .client-item { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 1rem; overflow: hidden; }
+    .client-item { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 1rem; overflow: hidden; position: relative; }
+    .client-item.blocked { border-left: 5px solid #000; opacity: 0.8; background: #e5e7eb; } /* Estilo visual de bloqueado */
+    
     .client-header { padding: 1.2rem; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
     .client-profile { display: flex; align-items: center; gap: 15px; }
     .client-logo { width: 50px; height: 50px; border-radius: 50%; object-fit: cover; border: 2px solid #eee; }
     .client-details { padding: 1.5rem; background: #fcfcfc; border-top: 1px solid var(--border); display: none; }
     .client-details.open { display: block; }
 
-    /* FINANCE GRID (5 Columnas para incluir Asistente) */
+    /* ETIQUETA BLOQUEADO */
+    .blocked-badge {
+        position: absolute; top: 10px; right: 50px;
+        background: #000; color: #fff; padding: 2px 8px; 
+        font-size: 10px; font-weight: bold; border-radius: 4px;
+        letter-spacing: 1px;
+    }
+
+    /* FINANCE GRID (5 Columnas) */
     .finance-grid { 
         display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; 
         background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 15px; 
@@ -183,12 +202,24 @@ CSS_THEME = """
     .fin-alpha { color: var(--primary); }
     .fin-assist { color: var(--assist); }
 
+    /* INFO BANCARIA */
+    .bank-info {
+        font-size: 0.8rem; color: #4b5563; background: #eff6ff; 
+        padding: 5px; border-radius: 4px; margin-top: 5px; border: 1px solid #bfdbfe;
+    }
+
     /* BUTTONS */
     .btn { background: var(--primary); color: white; padding: 0.7rem 1.5rem; border-radius: 6px; font-weight: 700; border: none; cursor: pointer; text-decoration: none; display: inline-block; font-size: 0.9rem; }
     .btn:hover { background: var(--primary-hover); }
     .btn-outline { background: white; border: 1px solid var(--border); color: var(--text-main); }
-    .btn-danger { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+    .btn-danger { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
     
+    /* BOTÓN BLOQUEO */
+    .btn-block { background: #000; color: #fff; }
+    .btn-block:hover { background: #333; }
+    .btn-unblock { background: #16a34a; color: #fff; }
+    .btn-unblock:hover { background: #15803d; }
+
     .token-control { display: flex; align-items: center; gap: 5px; }
     .btn-icon { width: 35px; height: 35px; border-radius: 6px; border: none; color: white; font-weight: bold; cursor: pointer; }
     .btn-add { background: var(--success); }
@@ -268,8 +299,24 @@ def admin_panel():
         if not raw_addr: raw_addr = 'Bogota, Colombia'
         map_url = f"https://maps.google.com/maps?q={raw_addr.replace(' ','+')}&output=embed"
         
+        # Estado de bloqueo
+        is_blocked = c.get('bloqueado', False)
+        blocked_class = "blocked" if is_blocked else ""
+        blocked_badge = '<div class="blocked-badge">BLOQUEADO POR PAGO</div>' if is_blocked else ''
+        
+        btn_block_html = f"""
+            <form action="/admin/toggle_block" method="post" style="display:inline;" onsubmit="return confirm('¿Cambiar estado de servicio?');">
+                <input type="hidden" name="hwid" value="{c['hwid']}">
+                <input type="hidden" name="new_status" value="{'false' if is_blocked else 'true'}">
+                <button class="btn {'btn-unblock' if is_blocked else 'btn-block'}" style="font-size:0.8rem; padding:5px 10px;">
+                    {'🔓 REACTIVAR' if is_blocked else '🔒 BLOQUEAR SERVICIO'}
+                </button>
+            </form>
+        """
+
         html_tokens += f"""
-        <div class="client-item">
+        <div class="client-item {blocked_class}">
+            {blocked_badge}
             <div class="client-header" onclick="toggleDetails({c['id']})">
                 <div class="client-profile">
                     <img src="{logo}" class="client-logo">
@@ -307,6 +354,7 @@ def admin_panel():
                             </div>
                         </form>
                         <div style="margin-top:20px; text-align:right;">
+                            {btn_block_html}
                             <a href="/admin/history/{c['hwid']}" class="btn btn-outline" style="padding:5px 10px; font-size:0.8rem;">HISTORIAL</a>
                             <form action="/admin/delete_client" method="post" style="display:inline;" onsubmit="return confirm('¿Borrar?');">
                                 <input type="hidden" name="hwid" value="{c['hwid']}">
@@ -326,23 +374,50 @@ def admin_panel():
         activaciones = c.get('conteo_activaciones', 0)
         valor_unit = c.get('valor_activacion', 5000)
         
-        # Porcentajes
+        # Bloqueo
+        is_blocked = c.get('bloqueado', False)
+        blocked_class = "blocked" if is_blocked else ""
+        blocked_badge = '<div class="blocked-badge">BLOQUEADO POR PAGO</div>' if is_blocked else ''
+        
+        btn_block_html = f"""
+            <form action="/admin/toggle_block" method="post" style="display:inline;" onsubmit="return confirm('¿Cambiar estado de servicio?');">
+                <input type="hidden" name="hwid" value="{c['hwid']}">
+                <input type="hidden" name="new_status" value="{'false' if is_blocked else 'true'}">
+                <button class="btn {'btn-unblock' if is_blocked else 'btn-block'}" style="font-size:0.8rem;">
+                    {'🔓 REACTIVAR' if is_blocked else '🔒 BLOQUEAR SERVICIO'}
+                </button>
+            </form>
+        """
+
+        # Datos Asistente
         pct_alpha = c.get('porcentaje_alpha', 70)
         has_assist = c.get('asistente_activo', False)
         pct_assist = c.get('asistente_porcentaje', 0)
         name_assist = c.get('asistente_nombre', 'Asistente')
         
-        # Cálculos Financieros (DIVISIÓN DE 3 PARTES)
-        total_generado = activaciones * valor_unit
+        # Datos Bancarios Asistente
+        banco = c.get('asistente_banco', '')
+        cuenta = c.get('asistente_cuenta', '')
+        tipo_cta = c.get('asistente_tipo_cuenta', '')
         
+        bank_info_html = ""
+        if has_assist and (banco or cuenta):
+            bank_info_html = f"""
+            <div class="bank-info">
+                <b>DATOS BANCARIOS {name_assist.upper()}:</b><br>
+                {banco} | {tipo_cta} | No. {cuenta}
+            </div>
+            """
+
+        # Cálculos Financieros
+        total_generado = activaciones * valor_unit
         ganancia_alpha = int(total_generado * (pct_alpha / 100))
         ganancia_assist = int(total_generado * (pct_assist / 100)) if has_assist else 0
-        
-        # El socio (dueño del local) se queda con el resto
         ganancia_socio = total_generado - ganancia_alpha - ganancia_assist
 
         html_conteo += f"""
-        <div class="client-item" style="border-left: 5px solid var(--primary);">
+        <div class="client-item {blocked_class}" style="border-left: 5px solid var(--primary);">
+            {blocked_badge}
             <div class="client-header" onclick="toggleDetails({c['id']})">
                 <div class="client-profile">
                     <img src="{logo}" class="client-logo">
@@ -376,8 +451,9 @@ def admin_panel():
                         <div class="fin-val">${ganancia_socio:,.0f}</div>
                     </div>
                     <div class="fin-box" style="{'opacity:0.3;' if not has_assist else ''}">
-                        <div class="fin-label">{name_assist.upper() if has_assist else 'SIN ASISTENTE'} ({pct_assist}%)</div>
+                        <div class="fin-label">{name_assist.upper()[:10] if has_assist else 'SIN ASISTENTE'} ({pct_assist}%)</div>
                         <div class="fin-val fin-assist">${ganancia_assist:,.0f}</div>
+                        {bank_info_html}
                     </div>
                 </div>
 
@@ -387,8 +463,9 @@ def admin_panel():
                         <button class="btn btn-outline" style="font-size:0.8rem;">🔄 REINICIAR CORTE</button>
                     </form>
                     
-                    <a href="/admin/history/{c['hwid']}" class="btn btn-outline" style="font-size:0.8rem;">📜 DETALLES</a>
+                    {btn_block_html}
                     
+                    <a href="/admin/history/{c['hwid']}" class="btn btn-outline" style="font-size:0.8rem;">📜 DETALLES</a>
                     <form action="/admin/delete_client" method="post" style="display:inline;" onsubmit="return confirm('¿Borrar?');">
                         <input type="hidden" name="hwid" value="{c['hwid']}">
                         <button class="btn btn-danger" style="font-size:0.8rem;">🗑 BORRAR</button>
@@ -455,6 +532,11 @@ def admin_panel():
                                 <div id="assist-fields" class="full-width form-grid" style="display:none; margin-top:5px;">
                                     <div><label>Nombre Asistente</label><input type="text" name="asistente_nombre" placeholder="Ej: Juan Vendedor"></div>
                                     <div><label>Porcentaje Asistente (%)</label><input type="number" name="asistente_porcentaje" value="10"></div>
+                                    
+                                    <div class="full-width" style="margin-top:5px; font-weight:bold; color:#2563eb;">Datos Bancarios Asistente</div>
+                                    <div><label>Banco</label><input type="text" name="asistente_banco" placeholder="Ej: Bancolombia"></div>
+                                    <div><label>Tipo Cuenta</label><select name="asistente_tipo_cuenta"><option>Ahorros</option><option>Corriente</option><option>Nequi/Daviplata</option></select></div>
+                                    <div class="full-width"><label>Número de Cuenta</label><input type="text" name="asistente_cuenta" placeholder="000-000-000"></div>
                                 </div>
                             </div>
 
@@ -522,11 +604,16 @@ def register():
                 if res.status_code == 200: logo_url = res.json()['data']['url']
             except: pass
 
-        # Datos del Asistente
+        # Datos del Asistente y Banco
         asistente_activo = True if request.form.get('asistente_activo') == 'on' else False
         asistente_nombre = request.form.get('asistente_nombre', '')
         try: asistente_porc = int(request.form.get('asistente_porcentaje', 0))
         except: asistente_porc = 0
+        
+        # Datos Bancarios
+        asis_banco = request.form.get('asistente_banco', '')
+        asis_cuenta = request.form.get('asistente_cuenta', '')
+        asis_tipo = request.form.get('asistente_tipo_cuenta', '')
 
         conn = get_db_connection()
         with conn.cursor() as cursor:
@@ -534,8 +621,8 @@ def register():
                 INSERT INTO clientes 
                 (nombre, hwid, responsable, telefono1, telefono2, email, direccion, logo_url, 
                  tokens_supervigilancia, tokens_practica, modelo_negocio, valor_activacion, porcentaje_alpha,
-                 asistente_activo, asistente_nombre, asistente_porcentaje) 
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0, 0, %s, %s, %s, %s, %s, %s)
+                 asistente_activo, asistente_nombre, asistente_porcentaje, asistente_banco, asistente_cuenta, asistente_tipo_cuenta) 
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0, 0, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 request.form['nombre'], request.form['hwid'],
                 request.form.get('responsable',''), request.form.get('telefono1',''),
@@ -544,7 +631,8 @@ def register():
                 request.form.get('modelo_negocio','tokens'),
                 request.form.get('valor_activacion', 5000),
                 request.form.get('porcentaje_alpha', 70),
-                asistente_activo, asistente_nombre, asistente_porc
+                asistente_activo, asistente_nombre, asistente_porc,
+                asis_banco, asis_cuenta, asis_tipo
             ))
             conn.commit()
         conn.close()
@@ -565,6 +653,26 @@ def add_tokens():
         with conn.cursor() as cursor:
             cursor.execute(f"UPDATE clientes SET {col} = {col} + %s WHERE hwid = %s", (final_amount, hwid))
             cursor.execute("INSERT INTO historial (hwid, accion, cantidad, tipo_token) VALUES (%s, %s, %s, %s)", (hwid, label, final_amount, token_type))
+            conn.commit()
+        conn.close()
+        return redirect('/admin/panel')
+    except Exception as e: return f"Error: {e}"
+
+# NUEVA RUTA PARA BLOQUEO/DESBLOQUEO
+@app.route('/admin/toggle_block', methods=['POST'])
+def toggle_block():
+    try:
+        hwid = request.form['hwid']
+        # Convertir string 'true'/'false' a booleano real
+        new_status = True if request.form['new_status'].lower() == 'true' else False
+        
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE clientes SET bloqueado = %s WHERE hwid = %s", (new_status, hwid))
+            
+            # Registrar acción en historial
+            accion_txt = "BLOQUEO_ADMIN" if new_status else "DESBLOQUEO_ADMIN"
+            cursor.execute("INSERT INTO historial (hwid, accion, cantidad, tipo_token) VALUES (%s, %s, 0, 'system')", (hwid, accion_txt))
             conn.commit()
         conn.close()
         return redirect('/admin/panel')
@@ -596,7 +704,6 @@ def delete_client():
         return redirect('/admin/panel')
     except: return "Error borrando"
 
-# USAR <path:hwid> PARA QUE ACEPTE BARRAS Y ESPACIOS SIN DAR ERROR 404
 @app.route('/admin/history/<path:hwid>')
 def history(hwid):
     conn = get_db_connection()
@@ -610,9 +717,6 @@ def history(hwid):
 
     pdf_link = f"/admin/download_pdf/{hwid}"
     
-    pdf_report = PDFReport()
-    # ... (Generación PDF en memoria solo si se llama a download_pdf)
-
     # Filas
     log_rows = ""
     for l in logs:
