@@ -24,7 +24,7 @@ SECRET_KEY = os.getenv("SECRET_KEY", "TU_CLAVE_MAESTRA_SUPER_SECRETA_V4").encode
 # API KEY IMGBB
 IMGBB_API_KEY = "df01bb05ce03159d54c33e1e22eba2cf"
 
-# --- CONEXIÓN BASE DE DATOS ---
+# --- CONEXIÓN BASE DE DATOS ROBUSTA ---
 def get_db_connection():
     try:
         if DB_HOST and (DB_HOST.startswith("postgres://") or DB_HOST.startswith("postgresql://")):
@@ -34,7 +34,7 @@ def get_db_connection():
                 host=DB_HOST, user=DB_USER, password=DB_PASS, dbname=DB_NAME, port=DB_PORT, sslmode='require'
             )
     except Exception as e:
-        print(f"Error DB: {e}")
+        print(f"Error DB Connection: {e}")
         return None
 
 # --- SEGURIDAD HMAC ---
@@ -49,9 +49,6 @@ def verify_signature(hwid, timestamp, received_sig):
 # =========================================================
 class PDFReport(FPDF):
     def header(self):
-        # Logo (Usamos el link directo para descargar temporalmente o un link fijo)
-        # Nota: FPDF a veces falla con imagenes HTTPS directas, lo ideal es tenerla local
-        # Usaremos solo texto estilizado si la imagen falla, o el logo Alpha si se puede
         self.set_font('Arial', 'B', 15)
         self.set_text_color(185, 28, 28) # Rojo Alpha
         self.cell(0, 10, 'ALPHA SECURITY - REPORTE DE MOVIMIENTOS', 0, 1, 'C')
@@ -79,6 +76,8 @@ def check_tokens():
             return jsonify({"status": "error", "msg": "Firma inválida"}), 403
 
         conn = get_db_connection()
+        if not conn: return jsonify({"status": "error", "msg": "DB Error"}), 500
+
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
                 cursor.execute("SELECT * FROM clientes WHERE hwid = %s", (hwid,))
@@ -107,7 +106,7 @@ def check_tokens():
         return jsonify({"status": "error", "msg": str(e)}), 500
 
 # =========================================================
-# INTERFAZ WEB (CRM PRO)
+# INTERFAZ WEB (CRM PRO LIGHT)
 # =========================================================
 
 CSS_THEME = """
@@ -172,7 +171,7 @@ CSS_THEME = """
 
     /* BOTONES TOKEN */
     .token-control { display: flex; align-items: center; gap: 10px; background: #f8fafc; padding: 10px; border-radius: 8px; border: 1px solid #eee; }
-    .btn-icon { width: 35px; height: 35px; border-radius: 6px; border: none; color: white; font-weight: bold; font-size: 1.2rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.2s; }
+    .btn-icon { width: 40px; height: 40px; border-radius: 6px; border: none; color: white; font-weight: bold; font-size: 1.2rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.2s; }
     .btn-add { background: var(--success); } .btn-add:hover { background: var(--success-hover); }
     .btn-sub { background: var(--primary); } .btn-sub:hover { background: var(--primary-hover); }
     
@@ -216,7 +215,7 @@ def home():
 @app.route('/admin/panel')
 def admin_panel():
     conn = get_db_connection()
-    if not conn: return "Error DB"
+    if not conn: return "Error crítico: No hay conexión a Base de Datos."
     
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
@@ -243,9 +242,16 @@ def admin_panel():
     # --- RENDER TAB 1: CLIENTES ---
     clients_html = ""
     for c in clients:
-        # Default avatar si no hay logo
+        # Validación de dirección segura
+        raw_address = c.get('direccion')
+        if not raw_address or raw_address.strip() == "":
+            raw_address = "Bogotá, Colombia"
+        
+        map_query = raw_address.replace(" ", "+")
+        map_url = f"https://maps.google.com/maps?q={map_query}&t=&z=13&ie=UTF8&iwloc=&output=embed"
+        
+        # Logo fallback
         logo = c.get('logo_url') or f"https://ui-avatars.com/api/?name={c['nombre']}&background=random"
-        map_url = f"https://maps.google.com/maps?q={c.get('direccion','Bogota').replace(' ','+')}&output=embed"
 
         clients_html += f"""
         <div class="client-item">
@@ -273,7 +279,7 @@ def admin_panel():
             <div id="det-{c['id']}" class="client-details">
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:30px;">
                     <div>
-                        <div class="section-title" style="margin-bottom:1rem; font-size:0.9rem;">DATOS DE CONTACTO</div>
+                        <div class="section-title" style="margin-bottom:1rem; font-size:0.9rem;">DATOS DE LA UNIDAD</div>
                         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; font-size:0.9rem;">
                             <div><b>Responsable:</b><br>{c.get('responsable','-')}</div>
                             <div><b>Email:</b><br><a href="mailto:{c.get('email')}" style="color:#b91c1c;">{c.get('email','-')}</a></div>
@@ -281,7 +287,7 @@ def admin_panel():
                             <div><b>Tel 2:</b><br>{c.get('telefono2','-')}</div>
                         </div>
                         <div style="margin-top:15px;">
-                            <b>Dirección:</b> {c.get('direccion','-')}
+                            <b>Dirección:</b> {raw_address}
                             <iframe class="map" src="{map_url}"></iframe>
                         </div>
                     </div>
@@ -299,11 +305,11 @@ def admin_panel():
                                 </select>
                             </div>
 
-                            <label>Acción</label>
+                            <label>Operación</label>
                             <div class="token-control">
                                 <input type="number" name="amount" placeholder="Cantidad" required style="font-weight:bold; font-size:1.1rem; border:none; background:transparent;">
-                                <button type="submit" name="action" value="sub" class="btn-icon btn-sub" title="Restar">-</button>
-                                <button type="submit" name="action" value="add" class="btn-icon btn-add" title="Agregar">+</button>
+                                <button type="submit" name="action" value="sub" class="btn-icon btn-sub" title="Restar (Corregir)">-</button>
+                                <button type="submit" name="action" value="add" class="btn-icon btn-add" title="Agregar (Recargar)">+</button>
                             </div>
                         </form>
 
@@ -312,7 +318,7 @@ def admin_panel():
                             
                             <form action="/admin/delete_client" method="post" onsubmit="return confirm('¿ESTÁ SEGURO? Esta acción borrará la escuela y su historial permanentemente.');">
                                 <input type="hidden" name="hwid" value="{c['hwid']}">
-                                <button type="submit" class="btn btn-danger" style="padding:0.5rem 1rem; font-size:0.8rem;">🗑 ELIMINAR ESCUELA</button>
+                                <button type="submit" class="btn btn-danger" style="padding:0.5rem 1rem; font-size:0.8rem;">🗑 DAR DE BAJA</button>
                             </form>
                         </div>
                     </div>
@@ -340,7 +346,7 @@ def admin_panel():
         <div class="container">
             <div class="tabs-nav">
                 <button id="btn-units" class="tab-btn active" onclick="openTab('units')">UNIDADES EN RED</button>
-                <button id="btn-reg" class="tab-btn" onclick="openTab('reg')">REGISTRAR UNIDAD</button>
+                <button id="btn-reg" class="tab-btn" onclick="openTab('reg')">REGISTRAR NUEVA</button>
                 <button id="btn-stats" class="tab-btn" onclick="openTab('stats')">INTELIGENCIA</button>
             </div>
 
@@ -532,12 +538,13 @@ def history(hwid):
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute("SELECT * FROM clientes WHERE hwid = %s", (hwid,))
             client = cursor.fetchone()
+            name = client['nombre'] if client else "Desconocido"
+
             cursor.execute("SELECT * FROM historial WHERE hwid = %s ORDER BY fecha DESC LIMIT 100", (hwid,))
             logs = cursor.fetchall()
     finally:
         conn.close()
     
-    # HTML del Historial con Botón PDF
     log_rows = ""
     for l in logs:
         color = "#059669" if l['cantidad'] > 0 else "#b91c1c"
@@ -551,7 +558,7 @@ def history(hwid):
                 <a href="/admin/download_pdf/{hwid}" class="btn">DESCARGAR REPORTE PDF</a>
             </div>
             <div class="card">
-                <div class="section-title">HISTORIAL: {client['nombre']}</div>
+                <div class="section-title">HISTORIAL: {name}</div>
                 <table style="width:100%; border-collapse:collapse;">
                     <tr style="background:#f9fafb; text-align:left;"><th style="padding:10px;">FECHA</th><th>ACCIÓN</th><th>TOKEN</th><th>CANT.</th></tr>
                     {log_rows}
@@ -600,7 +607,6 @@ def download_pdf(hwid):
         pdf.cell(40, 8, str(log['tipo_token']), 1)
         pdf.cell(30, 8, str(log['cantidad']), 1, 1, 'C')
 
-    # Salida
     buffer = io.BytesIO()
     pdf_content = pdf.output(dest='S').encode('latin-1')
     buffer.write(pdf_content)
