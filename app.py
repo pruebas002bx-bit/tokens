@@ -268,12 +268,15 @@ def admin_panel():
     
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            # 1. Clientes
             cursor.execute("SELECT * FROM clientes ORDER BY id DESC")
             all_clients = cursor.fetchall()
             
+            # 2. Stats
             cursor.execute("SELECT SUM(tokens_practica) as tp, SUM(tokens_supervigilancia) as ts, COUNT(*) as total FROM clientes")
             stats = cursor.fetchone()
             
+            # 3. Chart Data
             cursor.execute("""
                 SELECT TO_CHAR(fecha, 'YYYY-MM') as mes, SUM(cantidad) as total 
                 FROM historial WHERE accion = 'RECARGA' 
@@ -665,9 +668,12 @@ def reset_counter():
     try:
         hwid = request.form['hwid']
         conn = get_db_connection()
-        with conn.cursor() as cursor:
+        # SOLUCIÓN ERROR TUPLE: Usamos RealDictCursor para poder acceder por nombre
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute("SELECT conteo_activaciones FROM clientes WHERE hwid=%s", (hwid,))
-            total = cursor.fetchone()['conteo_activaciones']
+            row = cursor.fetchone()
+            total = row['conteo_activaciones'] if row else 0
+            
             cursor.execute("INSERT INTO historial (hwid, accion, cantidad, tipo_token) VALUES (%s, 'CORTE_CAJA', %s, 'conteo')", (hwid, total))
             cursor.execute("UPDATE clientes SET conteo_activaciones = 0 WHERE hwid = %s", (hwid,))
             conn.commit()
